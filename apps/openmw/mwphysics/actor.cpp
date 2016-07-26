@@ -1,12 +1,11 @@
 #include "actor.hpp"
 
-#include <osg/PositionAttitudeTransform>
-
 #include <BulletCollision/CollisionShapes/btCylinderShape.h>
 #include <BulletCollision/CollisionShapes/btBoxShape.h>
 #include <BulletCollision/CollisionDispatch/btCollisionWorld.h>
 
-#include <components/nifbullet/bulletnifloader.hpp>
+#include <components/sceneutil/positionattitudetransform.hpp>
+#include <components/resource/bulletshape.hpp>
 
 #include "../mwworld/class.hpp"
 
@@ -17,7 +16,7 @@ namespace MWPhysics
 {
 
 
-Actor::Actor(const MWWorld::Ptr& ptr, osg::ref_ptr<NifBullet::BulletShapeInstance> shape, btCollisionWorld* world)
+Actor::Actor(const MWWorld::Ptr& ptr, osg::ref_ptr<const Resource::BulletShape> shape, btCollisionWorld* world)
   : mCanWaterWalk(false), mWalkingOnWater(false)
   , mCollisionObject(0), mForce(0.f, 0.f, 0.f), mOnGround(false)
   , mInternalCollisionMode(true)
@@ -46,8 +45,7 @@ Actor::Actor(const MWWorld::Ptr& ptr, osg::ref_ptr<NifBullet::BulletShapeInstanc
 
     updateRotation();
     updateScale();
-    // already called by updateScale()
-    //updatePosition();
+    updatePosition();
 
     updateCollisionMask();
 }
@@ -77,7 +75,7 @@ void Actor::updateCollisionMask()
     mCollisionWorld->removeCollisionObject(mCollisionObject.get());
     int collisionMask = CollisionType_World | CollisionType_HeightMap;
     if (mExternalCollisionMode)
-        collisionMask |= CollisionType_Actor | CollisionType_Projectile;
+        collisionMask |= CollisionType_Actor | CollisionType_Projectile | CollisionType_Door;
     if (mCanWaterWalk)
         collisionMask |= CollisionType_Water;
     mCollisionWorld->addCollisionObject(mCollisionObject.get(), CollisionType_Actor, collisionMask);
@@ -87,12 +85,42 @@ void Actor::updatePosition()
 {
     osg::Vec3f position = mPtr.getRefData().getPosition().asVec3();
 
+    mPosition = position;
+    mPreviousPosition = position;
+
+    updateCollisionObjectPosition();
+}
+
+void Actor::updateCollisionObjectPosition()
+{
     btTransform tr = mCollisionObject->getWorldTransform();
     osg::Vec3f scaledTranslation = mRotation * osg::componentMultiply(mMeshTranslation, mScale);
-    osg::Vec3f newPosition = scaledTranslation + position;
-
+    osg::Vec3f newPosition = scaledTranslation + mPosition;
     tr.setOrigin(toBullet(newPosition));
     mCollisionObject->setWorldTransform(tr);
+}
+
+osg::Vec3f Actor::getCollisionObjectPosition() const
+{
+    return toOsg(mCollisionObject->getWorldTransform().getOrigin());
+}
+
+void Actor::setPosition(const osg::Vec3f &position)
+{
+    mPreviousPosition = mPosition;
+
+    mPosition = position;
+    updateCollisionObjectPosition();
+}
+
+osg::Vec3f Actor::getPosition() const
+{
+    return mPosition;
+}
+
+osg::Vec3f Actor::getPreviousPosition() const
+{
+    return mPreviousPosition;
 }
 
 void Actor::updateRotation ()
@@ -102,7 +130,7 @@ void Actor::updateRotation ()
     tr.setRotation(toBullet(mRotation));
     mCollisionObject->setWorldTransform(tr);
 
-    updatePosition();
+    updateCollisionObjectPosition();
 }
 
 void Actor::updateScale()
@@ -110,18 +138,25 @@ void Actor::updateScale()
     float scale = mPtr.getCellRef().getScale();
     osg::Vec3f scaleVec(scale,scale,scale);
 
-    if (!mPtr.getClass().isNpc())
-        mPtr.getClass().adjustScale(mPtr, scaleVec);
-
+    mPtr.getClass().adjustScale(mPtr, scaleVec, false);
     mScale = scaleVec;
     mShape->setLocalScaling(toBullet(mScale));
 
-    updatePosition();
+    scaleVec = osg::Vec3f(scale,scale,scale);
+    mPtr.getClass().adjustScale(mPtr, scaleVec, true);
+    mRenderingScale = scaleVec;
+
+    updateCollisionObjectPosition();
 }
 
 osg::Vec3f Actor::getHalfExtents() const
 {
     return osg::componentMultiply(mHalfExtents, mScale);
+}
+
+osg::Vec3f Actor::getRenderingHalfExtents() const
+{
+    return osg::componentMultiply(mHalfExtents, mRenderingScale);
 }
 
 void Actor::setInertialForce(const osg::Vec3f &force)

@@ -1,9 +1,11 @@
 #include "objects.hpp"
 
-#include "movement.hpp"
+#include <iostream>
 
 #include "../mwbase/environment.hpp"
 #include "../mwbase/world.hpp"
+
+#include "movement.hpp"
 
 namespace MWMechanics
 {
@@ -77,11 +79,18 @@ void Objects::update(float duration, bool paused)
     }
 }
 
-void Objects::playAnimationGroup(const MWWorld::Ptr& ptr, const std::string& groupName, int mode, int number)
+bool Objects::playAnimationGroup(const MWWorld::Ptr& ptr, const std::string& groupName, int mode, int number)
 {
     PtrControllerMap::iterator iter = mObjects.find(ptr);
     if(iter != mObjects.end())
-        iter->second->playGroup(groupName, mode, number);
+    {
+        return iter->second->playGroup(groupName, mode, number);
+    }
+    else
+    {
+        std::cerr<< "Error in Objects::playAnimationGroup:  Unable to find " << ptr.getCellRef().getRefId() << std::endl;
+        return false;
+    }
 }
 void Objects::skipAnimation(const MWWorld::Ptr& ptr)
 {

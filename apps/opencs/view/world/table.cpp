@@ -1,9 +1,7 @@
-
 #include "table.hpp"
 
 #include <QHeaderView>
 #include <QAction>
-#include <QApplication>
 #include <QMenu>
 #include <QContextMenuEvent>
 #include <QString>
@@ -13,7 +11,6 @@
 
 #include "../../model/doc/document.hpp"
 
-#include "../../model/world/data.hpp"
 #include "../../model/world/commands.hpp"
 #include "../../model/world/infotableproxymodel.hpp"
 #include "../../model/world/idtableproxymodel.hpp"
@@ -21,12 +18,10 @@
 #include "../../model/world/idtable.hpp"
 #include "../../model/world/record.hpp"
 #include "../../model/world/columns.hpp"
-#include "../../model/world/tablemimedata.hpp"
-#include "../../model/world/tablemimedata.hpp"
 #include "../../model/world/commanddispatcher.hpp"
-#include "../../model/settings/usersettings.hpp"
 
-#include "recordstatusdelegate.hpp"
+#include "../../model/prefs/state.hpp"
+
 #include "tableeditidaction.hpp"
 #include "util.hpp"
 
@@ -231,26 +226,8 @@ void CSVWorld::Table::mouseDoubleClickEvent (QMouseEvent *event)
 CSVWorld::Table::Table (const CSMWorld::UniversalId& id,
     bool createAndDelete, bool sorting, CSMDoc::Document& document)
 : DragRecordTable(document), mCreateAction (0),
-  mCloneAction(0),mRecordStatusDisplay (0)
+  mCloneAction(0), mRecordStatusDisplay (0), mJumpToAddedRecord(false), mUnselectAfterJump(false)
 {
-    CSMSettings::UserSettings &settings = CSMSettings::UserSettings::instance();
-    QString jumpSetting = settings.settingValue ("table-input/jump-to-added");
-    if (jumpSetting.isEmpty() || jumpSetting == "Jump and Select") // default
-    {
-        mJumpToAddedRecord = true;
-        mUnselectAfterJump = false;
-    }
-    else if(jumpSetting == "Jump Only")
-    {
-        mJumpToAddedRecord = true;
-        mUnselectAfterJump = true;
-    }
-    else
-    {
-        mJumpToAddedRecord = false;
-        mUnselectAfterJump = false;
-    }
-
     mModel = &dynamic_cast<CSMWorld::IdTableBase&> (*mDocument.getData().getTableModel (id));
 
     bool isInfoTable = id.getType() == CSMWorld::UniversalId::Type_TopicInfos ||
@@ -274,12 +251,16 @@ CSVWorld::Table::Table (const CSMWorld::UniversalId& id,
     horizontalHeader()->setResizeMode (QHeaderView::Interactive);
 #endif
     verticalHeader()->hide();
-    setSortingEnabled (sorting);
     setSelectionBehavior (QAbstractItemView::SelectRows);
     setSelectionMode (QAbstractItemView::ExtendedSelection);
 
-    int columns = mModel->columnCount();
+    setSortingEnabled (sorting);
+    if (sorting)
+    {
+        sortByColumn (mModel->findColumnIndex(CSMWorld::Columns::ColumnId_Id), Qt::AscendingOrder);
+    }
 
+    int columns = mModel->columnCount();
     for (int i=0; i<columns; ++i)
     {
         int flags = mModel->headerData (i, Qt::Horizontal, CSMWorld::ColumnBase::Role_Flags).toInt();
@@ -353,9 +334,7 @@ CSVWorld::Table::Table (const CSMWorld::UniversalId& id,
     connect (mProxyModel, SIGNAL (rowsRemoved (const QModelIndex&, int, int)),
         this, SLOT (tableSizeUpdate()));
 
-    //connect (mProxyModel, SIGNAL (rowsInserted (const QModelIndex&, int, int)),
-    //    this, SLOT (rowsInsertedEvent(const QModelIndex&, int, int)));
-    connect (mProxyModel, SIGNAL (rowAdded (const std::string &)), 
+    connect (mProxyModel, SIGNAL (rowAdded (const std::string &)),
         this, SLOT (rowAdded (const std::string &)));
 
     /// \note This signal could instead be connected to a slot that filters out changes not affecting
@@ -372,6 +351,10 @@ CSVWorld::Table::Table (const CSMWorld::UniversalId& id,
     mDoubleClickActions.insert (std::make_pair (Qt::ShiftModifier, Action_EditRecord));
     mDoubleClickActions.insert (std::make_pair (Qt::ControlModifier, Action_View));
     mDoubleClickActions.insert (std::make_pair (Qt::ShiftModifier | Qt::ControlModifier, Action_EditRecordAndClose));
+
+    connect (&CSMPrefs::State::get(), SIGNAL (settingChanged (const CSMPrefs::Setting *)),
+        this, SLOT (settingChanged (const CSMPrefs::Setting *)));
+    CSMPrefs::get()["ID Tables"].update();
 }
 
 void CSVWorld::Table::setEditLock (bool locked)
@@ -401,7 +384,7 @@ std::vector<std::string> CSVWorld::Table::getSelectedIds() const
     QModelIndexList selectedRows = selectionModel()->selectedRows();
     int columnIndex = mModel->findColumnIndex (CSMWorld::Columns::ColumnId_Id);
 
-    for (QModelIndexList::const_iterator iter (selectedRows.begin()); 
+    for (QModelIndexList::const_iterator iter (selectedRows.begin());
          iter != selectedRows.end();
          ++iter)
     {
@@ -545,9 +528,7 @@ void CSVWorld::Table::previewRecord()
 
 void CSVWorld::Table::executeExtendedDelete()
 {
-    CSMSettings::UserSettings &settings = CSMSettings::UserSettings::instance();
-    QString configSetting = settings.settingValue ("table-input/extended-config");
-    if (configSetting == "true")
+    if (CSMPrefs::get()["ID Tables"]["extended-config"].isTrue())
     {
         emit extendedDeleteConfigRequest(getSelectedIds());
     }
@@ -559,9 +540,7 @@ void CSVWorld::Table::executeExtendedDelete()
 
 void CSVWorld::Table::executeExtendedRevert()
 {
-    CSMSettings::UserSettings &settings = CSMSettings::UserSettings::instance();
-    QString configSetting = settings.settingValue ("table-input/extended-config");
-    if (configSetting == "true")
+    if (CSMPrefs::get()["ID Tables"]["extended-config"].isTrue())
     {
         emit extendedRevertConfigRequest(getSelectedIds());
     }
@@ -571,16 +550,16 @@ void CSVWorld::Table::executeExtendedRevert()
     }
 }
 
-void CSVWorld::Table::updateUserSetting (const QString &name, const QStringList &list)
+void CSVWorld::Table::settingChanged (const CSMPrefs::Setting *setting)
 {
-    if (name=="table-input/jump-to-added")
+    if (*setting=="ID Tables/jump-to-added")
     {
-        if(list.isEmpty() || list.at(0) == "Jump and Select") // default
+        if (setting->toString()=="Jump and Select")
         {
             mJumpToAddedRecord = true;
             mUnselectAfterJump = false;
         }
-        else if(list.at(0) == "Jump Only")
+        else if (setting->toString()=="Jump Only")
         {
             mJumpToAddedRecord = true;
             mUnselectAfterJump = true;
@@ -591,28 +570,23 @@ void CSVWorld::Table::updateUserSetting (const QString &name, const QStringList 
             mUnselectAfterJump = false;
         }
     }
-
-    if (name=="records/type-format" || name=="records/status-format")
+    else if (*setting=="Records/type-format" || *setting=="Records/status-format")
     {
         int columns = mModel->columnCount();
 
         for (int i=0; i<columns; ++i)
             if (QAbstractItemDelegate *delegate = itemDelegateForColumn (i))
             {
-                dynamic_cast<CommandDelegate&>
-                                        (*delegate).updateUserSetting (name, list);
-                {
-                    emit dataChanged (mModel->index (0, i),
-                                    mModel->index (mModel->rowCount()-1, i));
-                }
+                dynamic_cast<CommandDelegate&> (*delegate).settingChanged (setting);
+                emit dataChanged (mModel->index (0, i),
+                    mModel->index (mModel->rowCount()-1, i));
             }
-        return;
     }
-
-    QString base ("table-input/double");
-    if (name.startsWith (base))
+    else if (setting->getParent()->getKey()=="ID Tables" &&
+        setting->getKey().substr (0, 6)=="double")
     {
-        QString modifierString = name.mid (base.size());
+        std::string modifierString = setting->getKey().substr (6);
+
         Qt::KeyboardModifiers modifiers = 0;
 
         if (modifierString=="-s")
@@ -624,7 +598,7 @@ void CSVWorld::Table::updateUserSetting (const QString &name, const QStringList 
 
         DoubleClickAction action = Action_None;
 
-        QString value = list.at (0);
+        std::string value = setting->toString();
 
         if (value=="Edit in Place")
             action = Action_InPlaceEdit;
@@ -642,8 +616,6 @@ void CSVWorld::Table::updateUserSetting (const QString &name, const QStringList 
             action = Action_ViewAndClose;
 
         mDoubleClickActions[modifiers] = action;
-
-        return;
     }
 }
 

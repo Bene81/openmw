@@ -7,8 +7,6 @@ set(LAUNCHER
     textslotmsgbox.cpp
     settingspage.cpp
 
-    settings/graphicssettings.cpp
-
     utils/profilescombobox.cpp
     utils/textinputdialog.cpp
     utils/lineedit.cpp
@@ -23,8 +21,6 @@ set(LAUNCHER_HEADER
     playpage.hpp
     textslotmsgbox.hpp
     settingspage.hpp
-
-    settings/graphicssettings.hpp
 
     utils/profilescombobox.hpp
     utils/textinputdialog.hpp
@@ -103,9 +99,6 @@ if (DESIRED_QT_VERSION MATCHES 4)
     endif(WIN32)
 else()
     qt5_use_modules(openmw-launcher Widgets Core)
-    if (WIN32)
-        target_link_libraries(Qt5::WinMain)
-    endif()
 endif()
 
 if (BUILD_WITH_CODE_COVERAGE)

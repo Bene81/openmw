@@ -9,21 +9,9 @@
 namespace MWRender
 {
 
-    TerrainStorage::TerrainStorage(const VFS::Manager* vfs, bool preload)
-        : ESMTerrain::Storage(vfs)
+    TerrainStorage::TerrainStorage(const VFS::Manager* vfs, const std::string& normalMapPattern, const std::string& normalHeightMapPattern, bool autoUseNormalMaps, const std::string& specularMapPattern, bool autoUseSpecularMaps)
+        : ESMTerrain::Storage(vfs, normalMapPattern, normalHeightMapPattern, autoUseNormalMaps, specularMapPattern, autoUseSpecularMaps)
     {
-        if (preload)
-        {
-            const MWWorld::ESMStore &esmStore =
-                MWBase::Environment::get().getWorld()->getStore();
-
-            MWWorld::Store<ESM::Land>::iterator it = esmStore.get<ESM::Land>().begin();
-            for (; it != esmStore.get<ESM::Land>().end(); ++it)
-            {
-                ESM::Land* land = const_cast<ESM::Land*>(&*it); // TODO: fix store interface
-                land->loadData(ESM::Land::DATA_VCLR|ESM::Land::DATA_VHGT|ESM::Land::DATA_VNML|ESM::Land::DATA_VTEX);
-            }
-        }
     }
 
     void TerrainStorage::getBounds(float& minX, float& maxX, float& minY, float& maxY)
@@ -51,7 +39,7 @@ namespace MWRender
         maxY += 1;
     }
 
-    ESM::Land* TerrainStorage::getLand(int cellX, int cellY)
+    const ESM::Land* TerrainStorage::getLand(int cellX, int cellY)
     {
         const MWWorld::ESMStore &esmStore =
             MWBase::Environment::get().getWorld()->getStore();
@@ -62,6 +50,9 @@ namespace MWRender
         const int flags = ESM::Land::DATA_VCLR|ESM::Land::DATA_VHGT|ESM::Land::DATA_VNML|ESM::Land::DATA_VTEX;
         if (!land->isDataLoaded(flags))
             land->loadData(flags);
+
+        // TODO: unload land data when it's no longer needed
+
         return land;
     }
 
@@ -69,7 +60,7 @@ namespace MWRender
     {
         const MWWorld::ESMStore &esmStore =
             MWBase::Environment::get().getWorld()->getStore();
-        return esmStore.get<ESM::LandTexture>().find(index, plugin);
+        return esmStore.get<ESM::LandTexture>().search(index, plugin);
     }
 
 }

@@ -1,4 +1,3 @@
-
 #ifndef MWGUI_TOOLTIPS_H
 #define MWGUI_TOOLTIPS_H
 
@@ -59,7 +58,7 @@ namespace MWGui
 
         void setDelay(float delay);
 
-        void setFocusObject(const MWWorld::Ptr& focus);
+        void setFocusObject(const MWWorld::ConstPtr& focus);
         void setFocusObjectScreenCoords(float min_x, float min_y, float max_x, float max_y);
         ///< set the screen-space position of the tooltip for focused object
 
@@ -94,13 +93,14 @@ namespace MWGui
     private:
         MyGUI::Widget* mDynamicToolTipBox;
 
-        MWWorld::Ptr mFocusObject;
+        MWWorld::ConstPtr mFocusObject;
 
-        MyGUI::IntSize getToolTipViaPtr (bool image=true);
+        MyGUI::IntSize getToolTipViaPtr (int count, bool image=true);
         ///< @return requested tooltip size
 
-        MyGUI::IntSize createToolTip(const ToolTipInfo& info);
+        MyGUI::IntSize createToolTip(const ToolTipInfo& info, bool isFocusObject);
         ///< @return requested tooltip size
+        /// @param isFocusObject Is the object this tooltips originates from mFocusObject?
 
         float mFocusToolTipX;
         float mFocusToolTipY;
@@ -110,7 +110,7 @@ namespace MWGui
 
         static std::string sSchoolNames[6];
 
-	int mHorizontalScrollIndex;
+        int mHorizontalScrollIndex;
 
 
         float mDelay;

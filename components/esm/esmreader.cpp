@@ -55,8 +55,8 @@ void ESMReader::close()
     mCtx.leftRec = 0;
     mCtx.leftSub = 0;
     mCtx.subCached = false;
-    mCtx.recName.val = 0;
-    mCtx.subName.val = 0;
+    mCtx.recName.clear();
+    mCtx.subName.clear();
 }
 
 void ESMReader::openRaw(Files::IStreamPtr _esm, const std::string& name)
@@ -187,6 +187,11 @@ bool ESMReader::peekNextSub(const char *name)
     return mCtx.subName == name;
 }
 
+void ESMReader::cacheSubName()
+{
+    mCtx.subCached = true;
+}
+
 // Read subrecord name. This gets called a LOT, so I've optimized it
 // slightly.
 void ESMReader::getSubName()
@@ -199,16 +204,18 @@ void ESMReader::getSubName()
     }
 
     // reading the subrecord data anyway.
-    getExact(mCtx.subName.name, 4);
-    mCtx.leftRec -= 4;
+    const size_t subNameSize = mCtx.subName.data_size();
+    getExact(mCtx.subName.rw_data(), subNameSize);
+    mCtx.leftRec -= subNameSize;
 }
 
 bool ESMReader::isEmptyOrGetName()
 {
     if (mCtx.leftRec)
     {
-        getExact(mCtx.subName.name, 4);
-        mCtx.leftRec -= 4;
+        const size_t subNameSize = mCtx.subName.data_size();
+        getExact(mCtx.subName.rw_data(), subNameSize);
+        mCtx.leftRec -= subNameSize;
         return false;
     }
     return true;
@@ -262,7 +269,7 @@ NAME ESMReader::getRecName()
     if (!hasMoreRecs())
         fail("No more records, getRecName() failed");
     getName(mCtx.recName);
-    mCtx.leftFile -= 4;
+    mCtx.leftFile -= mCtx.recName.data_size();
 
     // Make sure we don't carry over any old cached subrecord
     // names. This can happen in some cases when we skip parts of a
@@ -276,6 +283,7 @@ void ESMReader::skipRecord()
 {
     skip(mCtx.leftRec);
     mCtx.leftRec = 0;
+    mCtx.subCached = false;
 }
 
 void ESMReader::getRecHeader(uint32_t &flags)

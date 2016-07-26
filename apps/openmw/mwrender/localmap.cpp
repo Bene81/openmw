@@ -3,6 +3,7 @@
 #include <iostream>
 #include <stdint.h>
 
+#include <osg/Fog>
 #include <osg/LightModel>
 #include <osg/Texture2D>
 #include <osg/ComputeBoundsVisitor>
@@ -27,25 +28,24 @@
 namespace
 {
 
-    class CameraUpdateCallback : public osg::NodeCallback
+    class CameraLocalUpdateCallback : public osg::NodeCallback
     {
     public:
-        CameraUpdateCallback(osg::Camera* cam, MWRender::LocalMap* parent)
+        CameraLocalUpdateCallback(MWRender::LocalMap* parent)
             : mRendered(false)
-            , mCamera(cam)
             , mParent(parent)
         {
         }
 
-        virtual void operator()(osg::Node*, osg::NodeVisitor*)
+        virtual void operator()(osg::Node* node, osg::NodeVisitor*)
         {
             if (mRendered)
-                mCamera->setNodeMask(0);
+                node->setNodeMask(0);
 
             if (!mRendered)
             {
                 mRendered = true;
-                mParent->markForRemoval(mCamera);
+                mParent->markForRemoval(static_cast<osg::Camera*>(node));
             }
 
             // Note, we intentionally do not traverse children here. The map camera's scene data is the same as the master camera's,
@@ -55,7 +55,6 @@ namespace
 
     private:
         bool mRendered;
-        osg::ref_ptr<osg::Camera> mCamera;
         MWRender::LocalMap* mParent;
     };
 
@@ -73,6 +72,7 @@ LocalMap::LocalMap(osgViewer::Viewer* viewer)
     : mViewer(viewer)
     , mMapResolution(Settings::Manager::getInt("local map resolution", "Map"))
     , mMapWorldSize(8192.f)
+    , mCellDistance(Settings::Manager::getInt("local map cell distance", "Map"))
     , mAngle(0.f)
     , mInterior(false)
 {
@@ -173,14 +173,19 @@ osg::ref_ptr<osg::Camera> LocalMap::createOrthographicCamera(float x, float y, f
     camera->setClearMask(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
     camera->setRenderOrder(osg::Camera::PRE_RENDER);
 
-    camera->setCullMask(Mask_Scene|Mask_Water|Mask_Terrain);
+    camera->setCullMask(Mask_Scene|Mask_SimpleWater|Mask_Terrain);
     camera->setNodeMask(Mask_RenderToTexture);
 
     osg::ref_ptr<osg::StateSet> stateset = new osg::StateSet;
     stateset->setMode(GL_LIGHTING, osg::StateAttribute::ON);
     stateset->setMode(GL_NORMALIZE, osg::StateAttribute::ON);
     stateset->setMode(GL_CULL_FACE, osg::StateAttribute::ON);
-    stateset->setMode(GL_FOG, osg::StateAttribute::OFF|osg::StateAttribute::OVERRIDE);
+    // assign large value to effectively turn off fog
+    // shaders don't respect glDisable(GL_FOG)
+    osg::ref_ptr<osg::Fog> fog (new osg::Fog);
+    fog->setStart(10000000);
+    fog->setEnd(10000000);
+    stateset->setAttributeAndModes(fog, osg::StateAttribute::OFF|osg::StateAttribute::OVERRIDE);
 
     osg::ref_ptr<osg::LightModel> lightmodel = new osg::LightModel;
     lightmodel->setAmbientIntensity(osg::Vec4(0.3f, 0.3f, 0.3f, 1.f));
@@ -205,7 +210,7 @@ osg::ref_ptr<osg::Camera> LocalMap::createOrthographicCamera(float x, float y, f
     camera->setStateSet(stateset);
     camera->setGraphicsContext(mViewer->getCamera()->getGraphicsContext());
     camera->setViewport(0, 0, mMapResolution, mMapResolution);
-    camera->setUpdateCallback(new CameraUpdateCallback(camera, this));
+    camera->setUpdateCallback(new CameraLocalUpdateCallback(this));
 
     return camera;
 }
@@ -230,11 +235,11 @@ void LocalMap::setupRenderToTexture(osg::ref_ptr<osg::Camera> camera, int x, int
     segment.mMapTexture = texture;
 }
 
-void LocalMap::requestMap(std::set<MWWorld::CellStore*> cells)
+void LocalMap::requestMap(std::set<const MWWorld::CellStore*> cells)
 {
-    for (std::set<MWWorld::CellStore*>::iterator it = cells.begin(); it != cells.end(); ++it)
+    for (std::set<const MWWorld::CellStore*>::iterator it = cells.begin(); it != cells.end(); ++it)
     {
-        MWWorld::CellStore* cell = *it;
+        const MWWorld::CellStore* cell = *it;
         if (cell->isExterior())
             requestExteriorMap(cell);
         else
@@ -297,7 +302,7 @@ void LocalMap::cleanupCameras()
     mCamerasPendingRemoval.clear();
 }
 
-void LocalMap::requestExteriorMap(MWWorld::CellStore* cell)
+void LocalMap::requestExteriorMap(const MWWorld::CellStore* cell)
 {
     mInterior = false;
 
@@ -322,7 +327,7 @@ void LocalMap::requestExteriorMap(MWWorld::CellStore* cell)
     }
 }
 
-void LocalMap::requestInteriorMap(MWWorld::CellStore* cell)
+void LocalMap::requestInteriorMap(const MWWorld::CellStore* cell)
 {
     osg::ComputeBoundsVisitor computeBoundsVisitor;
     computeBoundsVisitor.setTraversalMask(Mask_Scene|Mask_Terrain);
@@ -376,6 +381,7 @@ void LocalMap::requestInteriorMap(MWWorld::CellStore* cell)
     // If they changed by too much (for bounds, < padding is considered acceptable) then parts of the interior might not
     // be covered by the map anymore.
     // The following code detects this, and discards the CellStore's fog state if it needs to.
+    bool cellHasValidFog = false;
     if (cell->getFog())
     {
         ESM::FogState* fog = cell->getFog();
@@ -391,13 +397,14 @@ void LocalMap::requestInteriorMap(MWWorld::CellStore* cell)
                 || std::abs(mAngle - fog->mNorthMarkerAngle) > osg::DegreesToRadians(5.f))
         {
             // Nuke it
-            cell->setFog(NULL);
+            cellHasValidFog = false;
         }
         else
         {
             // Looks sane, use it
             mBounds = osg::BoundingBox(newMin, newMax);
             mAngle = fog->mNorthMarkerAngle;
+            cellHasValidFog = true;
         }
     }
 
@@ -435,7 +442,7 @@ void LocalMap::requestInteriorMap(MWWorld::CellStore* cell)
             MapSegment& segment = mSegments[std::make_pair(x,y)];
             if (!segment.mFogOfWarImage)
             {
-                if (!cell->getFog())
+                if (!cellHasValidFog)
                     segment.initFogOfWar();
                 else
                 {
@@ -479,7 +486,7 @@ osg::Vec2f LocalMap::interiorMapToWorldPosition (float nX, float nY, int x, int 
     return pos;
 }
 
-bool LocalMap::isPositionExplored (float nX, float nY, int x, int y, bool interior)
+bool LocalMap::isPositionExplored (float nX, float nY, int x, int y)
 {
     const MapSegment& segment = mSegments[std::make_pair(x, y)];
     if (!segment.mFogOfWarImage)
@@ -527,14 +534,14 @@ void LocalMap::updatePlayer (const osg::Vec3f& position, const osg::Quat& orient
     }
 
     // explore radius (squared)
-    const float exploreRadius = (mInterior ? 0.1f : 0.3f) * (sFogOfWarResolution-1); // explore radius from 0 to sFogOfWarResolution-1
+    const float exploreRadius = 0.17f * (sFogOfWarResolution-1); // explore radius from 0 to sFogOfWarResolution-1
     const float sqrExploreRadius = square(exploreRadius);
     const float exploreRadiusUV = exploreRadius / sFogOfWarResolution; // explore radius from 0 to 1 (UV space)
 
     // change the affected fog of war textures (in a 3x3 grid around the player)
-    for (int mx = -1; mx<2; ++mx)
+    for (int mx = -mCellDistance; mx<=mCellDistance; ++mx)
     {
-        for (int my = -1; my<2; ++my)
+        for (int my = -mCellDistance; my<=mCellDistance; ++my)
         {
             // is this texture affected at all?
             bool affected = false;
@@ -625,7 +632,7 @@ void LocalMap::MapSegment::initFogOfWar()
 void LocalMap::MapSegment::loadFogOfWar(const ESM::FogTexture &esm)
 {
     const std::vector<char>& data = esm.mImageData;
-    if (!data.size())
+    if (data.empty())
     {
         initFogOfWar();
         return;
@@ -645,7 +652,7 @@ void LocalMap::MapSegment::loadFogOfWar(const ESM::FogTexture &esm)
     osgDB::ReaderWriter::ReadResult result = readerwriter->readImage(in);
     if (!result.success())
     {
-        std::cerr << "Failed to read fog: " << result.message() << std::endl;
+        std::cerr << "Failed to read fog: " << result.message() << " code " << result.status() << std::endl;
         return;
     }
 
@@ -677,7 +684,7 @@ void LocalMap::MapSegment::saveFogOfWar(ESM::FogTexture &fog) const
     osgDB::ReaderWriter::WriteResult result = readerwriter->writeImage(*mFogOfWarImage, ostream);
     if (!result.success())
     {
-        std::cerr << "Unable to write fog: " << result.message() << std::endl;
+        std::cerr << "Unable to write fog: " << result.message() << " code " << result.status() << std::endl;
         return;
     }
     mFogOfWarImage->flipVertical();

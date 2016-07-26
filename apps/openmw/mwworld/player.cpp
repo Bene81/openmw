@@ -205,6 +205,35 @@ namespace MWWorld
          return ptr.getClass().getNpcStats(ptr).getDrawState();
     }
 
+    void Player::activate()
+    {
+        if (MWBase::Environment::get().getWindowManager()->isGuiMode())
+            return;
+
+        MWWorld::Ptr player = getPlayer();
+        const MWMechanics::NpcStats &playerStats = player.getClass().getNpcStats(player);
+        if (playerStats.isParalyzed() || playerStats.getKnockedDown())
+            return;
+
+        MWWorld::Ptr toActivate = MWBase::Environment::get().getWorld()->getFacedObject();
+
+        if (toActivate.isEmpty())
+            return;
+
+        if (toActivate.getClass().getName(toActivate) == "") // objects without name presented to user can never be activated
+            return;
+
+        if (toActivate.getClass().isActor())
+        {
+            MWMechanics::CreatureStats &stats = toActivate.getClass().getCreatureStats(toActivate);
+
+            if (stats.getAiSequence().isInCombat() && !stats.isDead())
+                return;
+        }
+
+        MWBase::Environment::get().getWorld()->activate(toActivate, player);
+    }
+
     bool Player::wasTeleported() const
     {
         return mTeleported;
@@ -227,6 +256,11 @@ namespace MWWorld
 
     bool Player::isInCombat() {
         return MWBase::Environment::get().getMechanicsManager()->getActorsFighting(getPlayer()).size() != 0;
+    }
+
+    bool Player::enemiesNearby()
+    {
+        return MWBase::Environment::get().getMechanicsManager()->getEnemiesNearby(getPlayer()).size() != 0;
     }
 
     void Player::markPosition(CellStore *markedCell, ESM::Position markedPosition)
@@ -326,12 +360,8 @@ namespace MWWorld
             catch (...)
             {
                 std::cerr << "Player cell '" << player.mCellId.mWorldspace << "' no longer exists" << std::endl;
-                // Cell no longer exists. Place the player in a default cell.
-                ESM::Position pos = mPlayer.mData.getPosition();
-                MWBase::Environment::get().getWorld()->indexToPosition(0, 0, pos.pos[0], pos.pos[1], true);
-                pos.pos[2] = 0;
-                mPlayer.mData.setPosition(pos);
-                mCellStore = world.getExterior(0,0);
+                // Cell no longer exists. The loader will have to choose a default cell.
+                mCellStore = NULL;
             }
 
             if (!player.mBirthsign.empty())

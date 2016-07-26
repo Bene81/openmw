@@ -1,7 +1,6 @@
 #include "activespells.hpp"
 
 #include <components/misc/rng.hpp>
-
 #include <components/misc/stringops.hpp>
 
 #include <components/esm/loadmgef.hpp>
@@ -132,15 +131,11 @@ namespace MWMechanics
         return scaledDuration-usedUp;
     }
 
-    bool ActiveSpells::isSpellActive(std::string id) const
+    bool ActiveSpells::isSpellActive(const std::string& id) const
     {
-        Misc::StringUtils::toLower(id);
         for (TContainer::iterator iter = mSpells.begin(); iter != mSpells.end(); ++iter)
         {
-            std::string left = iter->first;
-            Misc::StringUtils::toLower(left);
-
-            if (iter->first == id)
+            if (Misc::StringUtils::ciEqual(iter->first, id))
                 return true;
         }
         return false;
@@ -278,9 +273,7 @@ namespace MWMechanics
             for (std::vector<ActiveEffect>::iterator effectIt = it->second.mEffects.begin();
                  effectIt != it->second.mEffects.end();)
             {
-                const ESM::MagicEffect* effect = MWBase::Environment::get().getWorld()->getStore().get<ESM::MagicEffect>().find(effectIt->mEffectId);
-                if (effect->mData.mFlags & ESM::MagicEffect::CasterLinked
-                        && it->second.mCasterActorId == casterActorId)
+                if (it->second.mCasterActorId == casterActorId)
                     effectIt = it->second.mEffects.erase(effectIt);
                 else
                     ++effectIt;

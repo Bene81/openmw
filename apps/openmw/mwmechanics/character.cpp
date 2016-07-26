@@ -21,16 +21,11 @@
 
 #include <iostream>
 
-#include <osg/PositionAttitudeTransform>
-
-#include "movement.hpp"
-#include "npcstats.hpp"
-#include "creaturestats.hpp"
-#include "security.hpp"
-
 #include <components/misc/rng.hpp>
 
 #include <components/settings/settings.hpp>
+
+#include <components/sceneutil/positionattitudetransform.hpp>
 
 #include "../mwrender/animation.hpp"
 
@@ -38,12 +33,17 @@
 #include "../mwbase/world.hpp"
 #include "../mwbase/soundmanager.hpp"
 #include "../mwbase/windowmanager.hpp"
-#include "../mwbase/statemanager.hpp"
 
 #include "../mwworld/class.hpp"
 #include "../mwworld/inventorystore.hpp"
 #include "../mwworld/esmstore.hpp"
 #include "../mwworld/player.hpp"
+
+#include "movement.hpp"
+#include "npcstats.hpp"
+#include "creaturestats.hpp"
+#include "security.hpp"
+#include "actorutil.hpp"
 
 namespace
 {
@@ -225,7 +225,7 @@ public:
     { return weap.type == type; }
 };
 
-std::string CharacterController::chooseRandomGroup (const std::string& prefix, int* num)
+std::string CharacterController::chooseRandomGroup (const std::string& prefix, int* num) const
 {
     int numAnims=0;
     while (mAnimation->hasAnimation(prefix + toString(numAnims+1)))
@@ -237,83 +237,83 @@ std::string CharacterController::chooseRandomGroup (const std::string& prefix, i
     return prefix + toString(roll);
 }
 
-void CharacterController::refreshCurrentAnims(CharacterState idle, CharacterState movement, JumpingState jump, bool force)
+void CharacterController::refreshHitRecoilAnims()
 {
-    // hit recoils/knockdown animations handling
-    if(mPtr.getClass().isActor())
+    bool recovery = mPtr.getClass().getCreatureStats(mPtr).getHitRecovery();
+    bool knockdown = mPtr.getClass().getCreatureStats(mPtr).getKnockedDown();
+    bool block = mPtr.getClass().getCreatureStats(mPtr).getBlock();
+    if(mHitState == CharState_None)
     {
-        bool recovery = mPtr.getClass().getCreatureStats(mPtr).getHitRecovery();
-        bool knockdown = mPtr.getClass().getCreatureStats(mPtr).getKnockedDown();
-        bool block = mPtr.getClass().getCreatureStats(mPtr).getBlock();
-        if(mHitState == CharState_None)
+        if ((mPtr.getClass().getCreatureStats(mPtr).getFatigue().getCurrent() < 0
+                || mPtr.getClass().getCreatureStats(mPtr).getFatigue().getBase() == 0)
+                && mAnimation->hasAnimation("knockout"))
         {
-            if (mPtr.getClass().getCreatureStats(mPtr).getFatigue().getCurrent() < 0
-                    || mPtr.getClass().getCreatureStats(mPtr).getFatigue().getBase() == 0)
-            {
-                mHitState = CharState_KnockOut;
-                mCurrentHit = "knockout";
-                mAnimation->play(mCurrentHit, Priority_Knockdown, MWRender::Animation::BlendMask_All, false, 1, "start", "stop", 0.0f, ~0ul);
-                mPtr.getClass().getCreatureStats(mPtr).setKnockedDown(true);
-            }
-            else if(knockdown)
-            {
-                mHitState = CharState_KnockDown;
-                mCurrentHit = "knockdown";
-                mAnimation->play(mCurrentHit, Priority_Knockdown, MWRender::Animation::BlendMask_All, true, 1, "start", "stop", 0.0f, 0);
-            }
-            else if (recovery)
-            {
-                mHitState = CharState_Hit;
-                mCurrentHit = chooseRandomGroup("hit");
-                mAnimation->play(mCurrentHit, Priority_Hit, MWRender::Animation::BlendMask_All, true, 1, "start", "stop", 0.0f, 0);
-            }
-            else if (block)
-            {
-                mHitState = CharState_Block;
-                mCurrentHit = "shield";
-                MWRender::Animation::AnimPriority priorityBlock (Priority_Hit);
-                priorityBlock.mPriority[MWRender::Animation::BoneGroup_LeftArm] = Priority_Block;
-                mAnimation->play(mCurrentHit, priorityBlock, MWRender::Animation::BlendMask_All, true, 1, "block start", "block stop", 0.0f, 0);
-            }
-
-            // Cancel upper body animations
-            if (mHitState == CharState_KnockDown || mHitState == CharState_KnockOut)
-            {
-                if (mUpperBodyState > UpperCharState_WeapEquiped)
-                {
-                    mAnimation->disable(mCurrentWeapon);
-                    mUpperBodyState = UpperCharState_WeapEquiped;
-                }
-                else if (mUpperBodyState > UpperCharState_Nothing && mUpperBodyState < UpperCharState_WeapEquiped)
-                {
-                    mAnimation->disable(mCurrentWeapon);
-                    mUpperBodyState = UpperCharState_Nothing;
-                }
-            }
+            mHitState = CharState_KnockOut;
+            mCurrentHit = "knockout";
+            mAnimation->play(mCurrentHit, Priority_Knockdown, MWRender::Animation::BlendMask_All, false, 1, "start", "stop", 0.0f, ~0ul);
+            mPtr.getClass().getCreatureStats(mPtr).setKnockedDown(true);
         }
-        else if(!mAnimation->isPlaying(mCurrentHit))
-        {
-            mCurrentHit.erase();
-            if (knockdown)
-                mPtr.getClass().getCreatureStats(mPtr).setKnockedDown(false);
-            if (recovery)
-                mPtr.getClass().getCreatureStats(mPtr).setHitRecovery(false);
-            if (block)
-                mPtr.getClass().getCreatureStats(mPtr).setBlock(false);
-            mHitState = CharState_None;
-        }
-        else if (mHitState == CharState_KnockOut && mPtr.getClass().getCreatureStats(mPtr).getFatigue().getCurrent() > 0)
+        else if(knockdown && mAnimation->hasAnimation("knockdown"))
         {
             mHitState = CharState_KnockDown;
-            mAnimation->disable(mCurrentHit);
-            mAnimation->play(mCurrentHit, Priority_Knockdown, MWRender::Animation::BlendMask_All, true, 1, "loop stop", "stop", 0.0f, 0);
+            mCurrentHit = "knockdown";
+            mAnimation->play(mCurrentHit, Priority_Knockdown, MWRender::Animation::BlendMask_All, true, 1, "start", "stop", 0.0f, 0);
+        }
+        else if (recovery)
+        {
+            std::string anim = chooseRandomGroup("hit");
+            if (mAnimation->hasAnimation(anim))
+            {
+                mHitState = CharState_Hit;
+                mCurrentHit = anim;
+                mAnimation->play(mCurrentHit, Priority_Hit, MWRender::Animation::BlendMask_All, true, 1, "start", "stop", 0.0f, 0);
+            }
+        }
+        else if (block && mAnimation->hasAnimation("shield"))
+        {
+            mHitState = CharState_Block;
+            mCurrentHit = "shield";
+            MWRender::Animation::AnimPriority priorityBlock (Priority_Hit);
+            priorityBlock[MWRender::Animation::BoneGroup_LeftArm] = Priority_Block;
+            mAnimation->play(mCurrentHit, priorityBlock, MWRender::Animation::BlendMask_All, true, 1, "block start", "block stop", 0.0f, 0);
+        }
+
+        // Cancel upper body animations
+        if (mHitState == CharState_KnockDown || mHitState == CharState_KnockOut)
+        {
+            if (mUpperBodyState > UpperCharState_WeapEquiped)
+            {
+                mAnimation->disable(mCurrentWeapon);
+                mUpperBodyState = UpperCharState_WeapEquiped;
+            }
+            else if (mUpperBodyState > UpperCharState_Nothing && mUpperBodyState < UpperCharState_WeapEquiped)
+            {
+                mAnimation->disable(mCurrentWeapon);
+                mUpperBodyState = UpperCharState_Nothing;
+            }
         }
     }
+    else if(!mAnimation->isPlaying(mCurrentHit))
+    {
+        mCurrentHit.erase();
+        if (knockdown)
+            mPtr.getClass().getCreatureStats(mPtr).setKnockedDown(false);
+        if (recovery)
+            mPtr.getClass().getCreatureStats(mPtr).setHitRecovery(false);
+        if (block)
+            mPtr.getClass().getCreatureStats(mPtr).setBlock(false);
+        mHitState = CharState_None;
+    }
+    else if (mHitState == CharState_KnockOut && mPtr.getClass().getCreatureStats(mPtr).getFatigue().getCurrent() > 0)
+    {
+        mHitState = CharState_KnockDown;
+        mAnimation->disable(mCurrentHit);
+        mAnimation->play(mCurrentHit, Priority_Knockdown, MWRender::Animation::BlendMask_All, true, 1, "loop stop", "stop", 0.0f, 0);
+    }
+}
 
-    const WeaponInfo *weap = std::find_if(sWeaponTypeList, sWeaponTypeListEnd, FindWeaponType(mWeaponType));
-    if (!mPtr.getClass().isBipedal(mPtr))
-        weap = sWeaponTypeListEnd;
-
+void CharacterController::refreshJumpAnims(const WeaponInfo* weap, JumpingState jump, bool force)
+{
     if(force || jump != mJumpState)
     {
         bool startAtLoop = (jump == mJumpState);
@@ -352,7 +352,10 @@ void CharacterController::refreshCurrentAnims(CharacterState idle, CharacterStat
                              1.0f, "loop stop", "stop", 0.0f, 0);
         }
     }
+}
 
+void CharacterController::refreshMovementAnims(const WeaponInfo* weap, CharacterState movement, bool force)
+{
     if(force || movement != mMovementState)
     {
         mMovementState = movement;
@@ -390,10 +393,17 @@ void CharacterController::refreshCurrentAnims(CharacterState idle, CharacterStat
                 }
                 else
                 {
-                    if (weap != sWeaponTypeListEnd)
-                        movemask = MWRender::Animation::BlendMask_LowerBody;
                     movementAnimName.erase(swimpos, 4);
-                    if(!mAnimation->hasAnimation(movementAnimName))
+                    if (weap != sWeaponTypeListEnd)
+                    {
+                        std::string weapMovementAnimName = movementAnimName + weap->shortgroup;
+                        if(mAnimation->hasAnimation(weapMovementAnimName))
+                            movementAnimName = weapMovementAnimName;
+                        else
+                            movemask = MWRender::Animation::BlendMask_LowerBody;
+                    }
+
+                    if (!mAnimation->hasAnimation(movementAnimName))
                         movementAnimName.clear();
                 }
             }
@@ -453,16 +463,10 @@ void CharacterController::refreshCurrentAnims(CharacterState idle, CharacterStat
                              1.f, ((mode!=2)?"start":"loop start"), "stop", 0.0f, ~0ul);
         }
     }
+}
 
-    // idle handled last as it can depend on the other states
-    // FIXME: if one of the below states is close to their last animation frame (i.e. will be disabled in the coming update),
-    // the idle animation should be displayed
-    if ((mUpperBodyState != UpperCharState_Nothing
-            || (mMovementState != CharState_None && mMovementState != CharState_TurnLeft && mMovementState != CharState_TurnRight)
-            || mHitState != CharState_None)
-            && !mPtr.getClass().isBipedal(mPtr))
-        idle = CharState_None;
-
+void CharacterController::refreshIdleAnims(const WeaponInfo* weap, CharacterState idle, bool force)
+{
     if(force || idle != mIdleState)
     {
         mIdleState = idle;
@@ -477,7 +481,10 @@ void CharacterController::refreshCurrentAnims(CharacterState idle, CharacterStat
             idlePriority = Priority_SwimIdle;
         }
         else if(mIdleState == CharState_IdleSneak && mAnimation->hasAnimation("idlesneak"))
+        {
             idle = "idlesneak";
+            idlePriority[MWRender::Animation::BoneGroup_LowerBody] = Priority_SneakIdleLowerBody;
+        }
         else if(mIdleState != CharState_None)
         {
             idle = "idle";
@@ -495,8 +502,30 @@ void CharacterController::refreshCurrentAnims(CharacterState idle, CharacterStat
             mAnimation->play(mCurrentIdle, idlePriority, MWRender::Animation::BlendMask_All, false,
                              1.0f, "start", "stop", 0.0f, ~0ul, true);
     }
+}
 
-    updateIdleStormState();
+void CharacterController::refreshCurrentAnims(CharacterState idle, CharacterState movement, JumpingState jump, bool force)
+{
+    if (mPtr.getClass().isActor())
+        refreshHitRecoilAnims();
+
+    const WeaponInfo *weap = std::find_if(sWeaponTypeList, sWeaponTypeListEnd, FindWeaponType(mWeaponType));
+    if (!mPtr.getClass().isBipedal(mPtr))
+        weap = sWeaponTypeListEnd;
+
+    refreshJumpAnims(weap, jump, force);
+    refreshMovementAnims(weap, movement, force);
+
+    // idle handled last as it can depend on the other states
+    // FIXME: if one of the below states is close to their last animation frame (i.e. will be disabled in the coming update),
+    // the idle animation should be displayed
+    if ((mUpperBodyState != UpperCharState_Nothing
+            || (mMovementState != CharState_None && mMovementState != CharState_TurnLeft && mMovementState != CharState_TurnRight)
+            || mHitState != CharState_None)
+            && !mPtr.getClass().isBipedal(mPtr))
+        idle = CharState_None;
+
+    refreshIdleAnims(weap, idle, force);
 }
 
 
@@ -505,6 +534,8 @@ void getWeaponGroup(WeaponType weaptype, std::string &group)
     const WeaponInfo *info = std::find_if(sWeaponTypeList, sWeaponTypeListEnd, FindWeaponType(weaptype));
     if(info != sWeaponTypeListEnd)
         group = info->longgroup;
+    else
+        group.clear();
 }
 
 
@@ -612,9 +643,16 @@ void CharacterController::playDeath(float startpoint, CharacterState death)
                     false, 1.0f, "start", "stop", startpoint, 0);
 }
 
+CharacterState CharacterController::chooseRandomDeathState() const
+{
+    int selected=0;
+    chooseRandomGroup("death", &selected);
+    return static_cast<CharacterState>(CharState_Death1 + (selected-1));
+}
+
 void CharacterController::playRandomDeath(float startpoint)
 {
-    if (mPtr == MWBase::Environment::get().getWorld()->getPlayerPtr())
+    if (mPtr == getPlayer())
     {
         // The first-person animations do not include death, so we need to
         // force-switch to third person before playing the death animation.
@@ -635,9 +673,7 @@ void CharacterController::playRandomDeath(float startpoint)
     }
     else
     {
-        int selected=0;
-        chooseRandomGroup("death", &selected);
-        mDeathState = static_cast<CharacterState>(CharState_Death1 + (selected-1));
+        mDeathState = chooseRandomDeathState();
     }
     playDeath(startpoint, mDeathState);
 }
@@ -647,9 +683,11 @@ CharacterController::CharacterController(const MWWorld::Ptr &ptr, MWRender::Anim
     , mAnimation(anim)
     , mIdleState(CharState_None)
     , mMovementState(CharState_None)
+    , mAdjustMovementAnimSpeed(false)
     , mHasMovedInXY(false)
     , mMovementAnimationControlled(true)
     , mDeathState(CharState_None)
+    , mFloatToSurface(true)
     , mHitState(CharState_None)
     , mUpperBodyState(UpperCharState_Nothing)
     , mJumpState(JumpState_None)
@@ -695,8 +733,20 @@ CharacterController::CharacterController(const MWWorld::Ptr &ptr, MWRender::Anim
             mIdleState = CharState_Idle;
         else
         {
-            int deathindex = mPtr.getClass().getCreatureStats(mPtr).getDeathAnimation();
-            playDeath(1.0f, CharacterState(CharState_Death1 + deathindex));
+            const MWMechanics::CreatureStats& cStats = mPtr.getClass().getCreatureStats(mPtr);
+            if (cStats.isDeathAnimationFinished())
+            {
+                // Set the death state, but don't play it yet
+                // We will play it in the first frame, but only if no script set the skipAnim flag
+                signed char deathanim = cStats.getDeathAnimation();
+                if (deathanim == -1)
+                    mDeathState = chooseRandomDeathState();
+                else
+                    mDeathState = static_cast<CharacterState>(CharState_Death1 + deathanim);
+
+                mFloatToSurface = false;
+            }
+            // else: nothing to do, will detect death in the next frame and start playing death animation
         }
     }
     else
@@ -735,6 +785,7 @@ void CharacterController::handleTextKey(const std::string &groupname, const std:
     if(evt.compare(0, 7, "sound: ") == 0)
     {
         MWBase::SoundManager *sndMgr = MWBase::Environment::get().getSoundManager();
+        sndMgr->stopSound3D(mPtr, evt.substr(7));
         sndMgr->playSound3D(mPtr, evt.substr(7), 1.0f, 1.0f);
         return;
     }
@@ -767,10 +818,18 @@ void CharacterController::handleTextKey(const std::string &groupname, const std:
         if(!sound.empty())
         {
             MWBase::SoundManager *sndMgr = MWBase::Environment::get().getSoundManager();
-            MWBase::SoundManager::PlayType type = MWBase::SoundManager::Play_TypeSfx;
             if(evt.compare(10, evt.size()-10, "left") == 0 || evt.compare(10, evt.size()-10, "right") == 0 || evt.compare(10, evt.size()-10, "land") == 0)
-                type = MWBase::SoundManager::Play_TypeFoot;
-            sndMgr->playSound3D(mPtr, sound, volume, pitch, type);
+            {
+                // Don't make foot sounds local for the player, it makes sense to keep them
+                // positioned on the ground.
+                sndMgr->playSound3D(mPtr, sound, volume, pitch, MWBase::SoundManager::Play_TypeFoot,
+                                    MWBase::SoundManager::Play_NoPlayerLocal);
+            }
+            else
+            {
+                sndMgr->stopSound3D(mPtr, sound);
+                sndMgr->playSound3D(mPtr, sound, volume, pitch);
+            }
         }
         return;
     }
@@ -857,7 +916,7 @@ void CharacterController::updatePtr(const MWWorld::Ptr &ptr)
     mPtr = ptr;
 }
 
-void CharacterController::updateIdleStormState()
+void CharacterController::updateIdleStormState(bool inwater)
 {
     bool inStormDirection = false;
     if (MWBase::Environment::get().getWorld()->isInStorm())
@@ -867,7 +926,7 @@ void CharacterController::updateIdleStormState()
         inStormDirection = std::acos(stormDirection * characterDirection / (stormDirection.length() * characterDirection.length()))
                 > osg::DegreesToRadians(120.f);
     }
-    if (inStormDirection && mUpperBodyState == UpperCharState_Nothing && mAnimation->hasAnimation("idlestorm"))
+    if (inStormDirection && !inwater && mUpperBodyState == UpperCharState_Nothing && mAnimation->hasAnimation("idlestorm"))
     {
         float complete = 0;
         mAnimation->getInfo("idlestorm", &complete);
@@ -1057,7 +1116,7 @@ bool CharacterController::updateWeaponState()
     }
 
     MWRender::Animation::AnimPriority priorityWeapon(Priority_Weapon);
-    priorityWeapon.mPriority[MWRender::Animation::BoneGroup_LowerBody] = Priority_WeaponLowerBody;
+    priorityWeapon[MWRender::Animation::BoneGroup_LowerBody] = Priority_WeaponLowerBody;
 
     bool forcestateupdate = false;
     if(weaptype != mWeaponType && mHitState != CharState_KnockDown && mHitState != CharState_KnockOut
@@ -1070,11 +1129,14 @@ bool CharacterController::updateWeaponState()
         std::string weapgroup;
         if(weaptype == WeapType_None)
         {
-            getWeaponGroup(mWeaponType, weapgroup);
-            mAnimation->play(weapgroup, priorityWeapon,
-                             MWRender::Animation::BlendMask_All, true,
-                             1.0f, "unequip start", "unequip stop", 0.0f, 0);
-            mUpperBodyState = UpperCharState_UnEquipingWeap;
+            if ((!isWerewolf || mWeaponType != WeapType_Spell))
+            {
+                getWeaponGroup(mWeaponType, weapgroup);
+                mAnimation->play(weapgroup, priorityWeapon,
+                                 MWRender::Animation::BlendMask_All, true,
+                                 1.0f, "unequip start", "unequip stop", 0.0f, 0);
+                mUpperBodyState = UpperCharState_UnEquipingWeap;
+            }
         }
         else
         {
@@ -1162,7 +1224,7 @@ bool CharacterController::updateWeaponState()
                 // Unset casting flag, otherwise pressing the mouse button down would
                 // continue casting every frame if there is no animation
                 mAttackingOrSpell = false;
-                if (mPtr == MWBase::Environment::get().getWorld()->getPlayerPtr())
+                if (mPtr == getPlayer())
                 {
                     MWBase::Environment::get().getWorld()->getPlayer().setAttackingOrSpell(false);
                 }
@@ -1172,7 +1234,7 @@ bool CharacterController::updateWeaponState()
                 // For the player, set the spell we want to cast
                 // This has to be done at the start of the casting animation,
                 // *not* when selecting a spell in the GUI (otherwise you could change the spell mid-animation)
-                if (mPtr == MWBase::Environment::get().getWorld()->getPlayerPtr())
+                if (mPtr == getPlayer())
                 {
                     std::string selectedSpell = MWBase::Environment::get().getWindowManager()->getSelectedSpell();
                     stats.getSpells().setSelectedSpell(selectedSpell);
@@ -1243,7 +1305,9 @@ bool CharacterController::updateWeaponState()
                 if(!resultMessage.empty())
                     MWBase::Environment::get().getWindowManager()->messageBox(resultMessage);
                 if(!resultSound.empty())
-                    MWBase::Environment::get().getSoundManager()->playSound(resultSound, 1.0f, 1.0f);
+                    MWBase::Environment::get().getSoundManager()->playSound3D(target,
+                    resultSound, 1.0f, 1.0f, MWBase::SoundManager::Play_TypeSfx,
+                    MWBase::SoundManager::Play_Normal);
             }
             else if (ammunition)
             {
@@ -1252,14 +1316,19 @@ bool CharacterController::updateWeaponState()
                     mAttackType = "shoot";
                 else
                 {
-                    if(isWeapon && mPtr == MWBase::Environment::get().getWorld()->getPlayerPtr() &&
-                            Settings::Manager::getBool("best attack", "Game"))
+                    if (isWeapon)
                     {
-                        MWWorld::ContainerStoreIterator weapon = mPtr.getClass().getInventoryStore(mPtr).getSlot(MWWorld::InventoryStore::Slot_CarriedRight);
-                        mAttackType = getBestAttack(weapon->get<ESM::Weapon>()->mBase);
+                        if(mPtr == getPlayer() &&
+                                Settings::Manager::getBool("best attack", "Game"))
+                        {
+                            MWWorld::ContainerStoreIterator weapon = mPtr.getClass().getInventoryStore(mPtr).getSlot(MWWorld::InventoryStore::Slot_CarriedRight);
+                            mAttackType = getBestAttack(weapon->get<ESM::Weapon>()->mBase);
+                        }
+                        else
+                            setAttackTypeBasedOnMovement();
                     }
                     else
-                        determineAttackType();
+                        setAttackTypeRandomly();
                 }
 
                 mAnimation->play(mCurrentWeapon, priorityWeapon,
@@ -1470,6 +1539,8 @@ bool CharacterController::updateWeaponState()
         }
     }
 
+    mAnimation->setAccurateAiming(mUpperBodyState > UpperCharState_WeapEquiped);
+
     return forcestateupdate;
 }
 
@@ -1558,7 +1629,7 @@ void CharacterController::update(float duration)
 
 
         // advance athletics
-        if(mHasMovedInXY && mPtr == MWBase::Environment::get().getWorld()->getPlayerPtr())
+        if(mHasMovedInXY && mPtr == getPlayer())
         {
             if(inwater)
             {
@@ -1659,7 +1730,7 @@ void CharacterController::update(float duration)
                 }
 
                 // advance acrobatics
-                if (mPtr == MWBase::Environment::get().getWorld()->getPlayerPtr())
+                if (mPtr == getPlayer())
                     cls.skillUsageSucceeded(mPtr, ESM::Skill::Acrobatics, 0);
 
                 // decrease fatigue
@@ -1702,7 +1773,7 @@ void CharacterController::update(float duration)
                 else
                 {
                     // report acrobatics progression
-                    if (mPtr == MWBase::Environment::get().getWorld()->getPlayerPtr())
+                    if (mPtr == getPlayer())
                         cls.skillUsageSucceeded(mPtr, ESM::Skill::Acrobatics, 1);
                 }
             }
@@ -1736,7 +1807,7 @@ void CharacterController::update(float duration)
                                          : (sneak ? CharState_SneakBack
                                                   : (isrunning ? CharState_RunBack : CharState_WalkBack)));
             }
-            else if(rot.z() != 0.0f && !inwater && !sneak && !MWBase::Environment::get().getWorld()->isFirstPerson())
+            else if(rot.z() != 0.0f && !inwater && !sneak && !(mPtr == getPlayer() && MWBase::Environment::get().getWorld()->isFirstPerson()))
             {
                 if(rot.z() > 0.0f)
                     movestate = CharState_TurnRight;
@@ -1762,7 +1833,7 @@ void CharacterController::update(float duration)
 
         if(mAnimQueue.empty() || inwater || sneak)
         {
-            idlestate = (inwater ? CharState_IdleSwim : (sneak ? CharState_IdleSneak : CharState_Idle));
+            idlestate = (inwater ? CharState_IdleSwim : (sneak && !inJump ? CharState_IdleSneak : CharState_Idle));
         }
         else if(mAnimQueue.size() > 1)
         {
@@ -1786,6 +1857,7 @@ void CharacterController::update(float duration)
                 forcestateupdate = updateCreatureState() || forcestateupdate;
 
             refreshCurrentAnims(idlestate, movestate, jumpstate, forcestateupdate);
+            updateIdleStormState(inwater);
         }
 
         if (inJump)
@@ -1804,7 +1876,6 @@ void CharacterController::update(float duration)
 
         if (!mSkipAnim)
         {
-            rot *= osg::RadiansToDegrees(1.0f);
             if(mHitState != CharState_KnockDown && mHitState != CharState_KnockOut)
             {
                 world->rotateObject(mPtr, rot.x(), rot.y(), rot.z(), true);
@@ -1829,6 +1900,13 @@ void CharacterController::update(float duration)
     }
     else if(cls.getCreatureStats(mPtr).isDead())
     {
+        // initial start of death animation for actors that started the game as dead
+        // not done in constructor since we need to give scripts a chance to set the mSkipAnim flag
+        if (!mSkipAnim && mDeathState != CharState_None && mCurrentDeath.empty())
+        {
+            playDeath(1.f, mDeathState);
+        }
+        // We must always queue movement, even if there is none, to apply gravity.
         world->queueMovement(mPtr, osg::Vec3f(0.f, 0.f, 0.f));
     }
 
@@ -1861,6 +1939,9 @@ void CharacterController::update(float duration)
     if (mSkipAnim)
         mAnimation->updateEffects(duration);
 
+    if (mFloatToSurface && cls.isActor() && cls.getCreatureStats(mPtr).isDead() && cls.canSwim(mPtr))
+        moved.z() = 1.0;
+
     // Update movement
     if(mMovementAnimationControlled && mPtr.getClass().isActor())
         world->queueMovement(mPtr, moved);
@@ -1871,10 +1952,13 @@ void CharacterController::update(float duration)
 }
 
 
-void CharacterController::playGroup(const std::string &groupname, int mode, int count)
+bool CharacterController::playGroup(const std::string &groupname, int mode, int count)
 {
     if(!mAnimation || !mAnimation->hasAnimation(groupname))
+    {
         std::cerr<< "Animation "<<groupname<<" not found for " << mPtr.getCellRef().getRefId() << std::endl;
+        return false;
+    }
     else
     {
         count = std::max(count, 1);
@@ -1899,6 +1983,7 @@ void CharacterController::playGroup(const std::string &groupname, int mode, int 
             mAnimQueue.push_back(std::make_pair(groupname, count-1));
         }
     }
+    return true;
 }
 
 void CharacterController::skipAnim()
@@ -1936,30 +2021,28 @@ void CharacterController::forceStateUpdate()
     mAnimation->runAnimation(0.f);
 }
 
-bool CharacterController::kill()
+CharacterController::KillResult CharacterController::kill()
 {
-    if( isDead() )
+    if (mDeathState == CharState_None)
     {
-        if( mPtr == MWBase::Environment::get().getWorld()->getPlayerPtr() && !isAnimPlaying(mCurrentDeath) )
-        {
-            //player's death animation is over
-            MWBase::Environment::get().getStateManager()->askLoadRecent();
-        }
-        return false;
+        playRandomDeath();
+
+        mAnimation->disable(mCurrentIdle);
+
+        mIdleState = CharState_None;
+        mCurrentIdle.clear();
+        return Result_DeathAnimStarted;
     }
 
-    playRandomDeath();
-
-    mAnimation->disable(mCurrentIdle);
-
-    mIdleState = CharState_None;
-    mCurrentIdle.clear();
-
-    // Play Death Music if it was the player dying
-    if(mPtr == MWBase::Environment::get().getWorld()->getPlayerPtr())
-        MWBase::Environment::get().getSoundManager()->streamMusic("Special/MW_Death.mp3");
-
-    return true;
+    MWMechanics::CreatureStats& cStats = mPtr.getClass().getCreatureStats(mPtr);
+    if (isAnimPlaying(mCurrentDeath))
+        return Result_DeathAnimPlaying;
+    if (!cStats.isDeathAnimationFinished())
+    {
+        cStats.setDeathAnimationFinished(true);
+        return Result_DeathAnimJustFinished;
+    }
+    return Result_DeathAnimFinished;
 }
 
 void CharacterController::resurrect()
@@ -1997,7 +2080,7 @@ void CharacterController::updateMagicEffects()
     float alpha = 1.f;
     if (mPtr.getClass().getCreatureStats(mPtr).getMagicEffects().get(ESM::MagicEffect::Invisibility).getMagnitude())
     {
-        if (mPtr == MWBase::Environment::get().getWorld()->getPlayerPtr())
+        if (mPtr == getPlayer())
             alpha = 0.4f;
         else
             alpha = 0.f;
@@ -2016,7 +2099,18 @@ void CharacterController::updateMagicEffects()
     mAnimation->setLightEffect(light);
 }
 
-void CharacterController::determineAttackType()
+void CharacterController::setAttackTypeRandomly()
+{
+    float random = Misc::Rng::rollProbability();
+    if (random >= 2/3.f)
+        mAttackType = "thrust";
+    else if (random >= 1/3.f)
+        mAttackType = "slash";
+    else
+        mAttackType = "chop";
+}
+
+void CharacterController::setAttackTypeBasedOnMovement()
 {
     float *move = mPtr.getClass().getMovementSettings(mPtr).mPosition;
 
@@ -2036,6 +2130,15 @@ bool CharacterController::isReadyToBlock() const
 bool CharacterController::isKnockedOut() const
 {
     return mHitState == CharState_KnockOut;
+}
+
+bool CharacterController::isSneaking() const
+{
+    return mIdleState == CharState_IdleSneak ||
+            mMovementState == CharState_SneakForward ||
+            mMovementState == CharState_SneakBack ||
+            mMovementState == CharState_SneakLeft ||
+            mMovementState == CharState_SneakRight;
 }
 
 void CharacterController::setAttackingOrSpell(bool attackingOrSpell)
@@ -2070,7 +2173,7 @@ void CharacterController::setActive(bool active)
     mAnimation->setActive(active);
 }
 
-void CharacterController::setHeadTrackTarget(const MWWorld::Ptr &target)
+void CharacterController::setHeadTrackTarget(const MWWorld::ConstPtr &target)
 {
     mHeadTrackTarget = target;
 }
@@ -2086,27 +2189,28 @@ void CharacterController::updateHeadTracking(float duration)
 
     if (!mHeadTrackTarget.isEmpty())
     {
-        osg::MatrixList mats = head->getWorldMatrices();
-        if (mats.empty())
+        osg::NodePathList nodepaths = head->getParentalNodePaths();
+        if (nodepaths.empty())
             return;
-        osg::Matrixf mat = mats[0];
+        osg::Matrixf mat = osg::computeLocalToWorld(nodepaths[0]);
         osg::Vec3f headPos = mat.getTrans();
 
-        osg::Vec3f targetPos (mHeadTrackTarget.getRefData().getPosition().asVec3());
-        if (MWRender::Animation* anim = MWBase::Environment::get().getWorld()->getAnimation(mHeadTrackTarget))
+        osg::Vec3f direction;
+        if (const MWRender::Animation* anim = MWBase::Environment::get().getWorld()->getAnimation(mHeadTrackTarget))
         {
             const osg::Node* node = anim->getNode("Head");
             if (node == NULL)
                 node = anim->getNode("Bip01 Head");
             if (node != NULL)
             {
-                osg::MatrixList mats = node->getWorldMatrices();
-                if (mats.size())
-                    targetPos = mats[0].getTrans();
+                osg::NodePathList nodepaths = node->getParentalNodePaths();
+                if (!nodepaths.empty())
+                    direction = osg::computeLocalToWorld(nodepaths[0]).getTrans() - headPos;
             }
+            else
+                // no head node to look at, fall back to look at center of collision box
+                direction = MWBase::Environment::get().getWorld()->aimToTarget(mPtr, mHeadTrackTarget);
         }
-
-        osg::Vec3f direction = targetPos - headPos;
         direction.normalize();
 
         if (!mPtr.getRefData().getBaseNode())

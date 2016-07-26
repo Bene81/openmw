@@ -2,6 +2,8 @@
 
 #include <stdexcept>
 
+#include <components/esm/cellid.hpp>
+
 #include "collectionbase.hpp"
 #include "columnbase.hpp"
 
@@ -76,12 +78,15 @@ bool CSMWorld::IdTable::setData (const QModelIndex &index, const QVariant &value
     if (mIdCollection->getColumn (index.column()).isEditable() && role==Qt::EditRole)
     {
         mIdCollection->setData (index.row(), index.column(), value);
+        emit dataChanged(index, index);
 
         // Modifying a value can also change the Modified status of a record.
-        // To track this, we inform about the change of a whole row.
-        QModelIndex rowStart = this->index(index.row(), 0);
-        QModelIndex rowEnd = this->index(index.row(), columnCount(index.parent()) - 1);
-        emit dataChanged(rowStart, rowEnd);
+        int stateColumn = searchColumnIndex(Columns::ColumnId_Modification);
+        if (stateColumn != -1)
+        {
+            QModelIndex stateIndex = this->index(index.row(), stateColumn);
+            emit dataChanged(stateIndex, stateIndex);
+        }
 
         return true;
     }
@@ -142,6 +147,23 @@ void CSMWorld::IdTable::addRecord (const std::string& id, UniversalId::Type type
     beginInsertRows (QModelIndex(), index, index);
 
     mIdCollection->appendBlankRecord (id, type);
+
+    endInsertRows();
+}
+
+void CSMWorld::IdTable::addRecordWithData (const std::string& id,
+    const std::map<int, QVariant>& data, UniversalId::Type type)
+{
+    int index = mIdCollection->getAppendIndex (id, type);
+
+    beginInsertRows (QModelIndex(), index, index);
+
+    mIdCollection->appendBlankRecord (id, type);
+
+    for (std::map<int, QVariant>::const_iterator iter (data.begin()); iter!=data.end(); ++iter)
+    {
+        mIdCollection->setData(index, iter->first, iter->second);
+    }
 
     endInsertRows();
 }
@@ -239,7 +261,7 @@ std::pair<CSMWorld::UniversalId, std::string> CSMWorld::IdTable::view (int row) 
         return std::make_pair (UniversalId::Type_None, "");
 
     if (id[0]=='#')
-        id = "sys::default";
+        id = ESM::CellId::sDefaultWorldspace;
 
     return std::make_pair (UniversalId (UniversalId::Type_Scene, id), hint);
 }

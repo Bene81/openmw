@@ -1,5 +1,7 @@
-
 #include "aiextensions.hpp"
+
+#include <stdexcept>
+#include <iostream>
 
 #include <components/compiler/extensions.hpp>
 #include <components/compiler/opcodes.hpp>
@@ -9,6 +11,7 @@
 #include <components/interpreter/opcodes.hpp>
 
 #include "../mwworld/class.hpp"
+#include "../mwworld/esmstore.hpp"
 
 #include "../mwmechanics/creaturestats.hpp"
 #include "../mwmechanics/aiactivate.hpp"
@@ -16,16 +19,15 @@
 #include "../mwmechanics/aifollow.hpp"
 #include "../mwmechanics/aitravel.hpp"
 #include "../mwmechanics/aiwander.hpp"
+#include "../mwmechanics/aiface.hpp"
 
 #include "../mwbase/environment.hpp"
 #include "../mwbase/world.hpp"
+#include "../mwbase/mechanicsmanager.hpp"
 
 #include "interpretercontext.hpp"
 #include "ref.hpp"
 
-#include <iostream>
-
-#include "../mwbase/mechanicsmanager.hpp"
 
 namespace MWScript
 {
@@ -144,6 +146,11 @@ namespace MWScript
 
                     // discard additional arguments (reset), because we have no idea what they mean.
                     for (unsigned int i=0; i<arg0; ++i) runtime.pop();
+
+                    if (cellID.empty())
+                        throw std::runtime_error("AiEscortCell: no cell ID given");
+
+                    MWBase::Environment::get().getWorld()->getStore().get<ESM::Cell>().find(cellID);
 
                     MWMechanics::AiEscort escortPackage(actorID, cellID, static_cast<int>(duration), x, y, z);
                     ptr.getClass().getCreatureStats (ptr).getAiSequence().stack(escortPackage, ptr);
@@ -425,7 +432,7 @@ namespace MWScript
                     MWWorld::Ptr targetPtr;
                     if (creatureStats.getAiSequence().getCombatTarget (targetPtr))
                     {
-                        if (targetPtr.getCellRef().getRefId() == testedTargetId)
+                        if (!targetPtr.isEmpty() && targetPtr.getCellRef().getRefId() == testedTargetId)
                             targetsAreEqual = true;
                     }
                     runtime.push(int(targetsAreEqual));
@@ -459,7 +466,6 @@ namespace MWScript
                 }
         };
 
-        template<class R>
         class OpToggleAI : public Interpreter::Opcode0
         {
             public:
@@ -478,7 +484,16 @@ namespace MWScript
         public:
             virtual void execute(Interpreter::Runtime& runtime)
             {
-                /// \todo implement
+                MWWorld::Ptr actor = R()(runtime);
+
+                Interpreter::Type_Float x = runtime[0].mFloat;
+                runtime.pop();
+
+                Interpreter::Type_Float y = runtime[0].mFloat;
+                runtime.pop();
+
+                MWMechanics::AiFace facePackage(x, y);
+                actor.getClass().getCreatureStats(actor).getAiSequence().stack(facePackage, actor);
             }
         };
 
@@ -514,8 +529,7 @@ namespace MWScript
             interpreter.installSegment5 (Compiler::Ai::opcodeStartCombatExplicit, new OpStartCombat<ExplicitRef>);
             interpreter.installSegment5 (Compiler::Ai::opcodeStopCombat, new OpStopCombat<ImplicitRef>);
             interpreter.installSegment5 (Compiler::Ai::opcodeStopCombatExplicit, new OpStopCombat<ExplicitRef>);
-            interpreter.installSegment5 (Compiler::Ai::opcodeToggleAI, new OpToggleAI<ImplicitRef>);
-            interpreter.installSegment5 (Compiler::Ai::opcodeToggleAIExplicit, new OpToggleAI<ExplicitRef>);
+            interpreter.installSegment5 (Compiler::Ai::opcodeToggleAI, new OpToggleAI);
 
             interpreter.installSegment5 (Compiler::Ai::opcodeSetHello, new OpSetAiSetting<ImplicitRef>(0));
             interpreter.installSegment5 (Compiler::Ai::opcodeSetHelloExplicit, new OpSetAiSetting<ExplicitRef>(0));

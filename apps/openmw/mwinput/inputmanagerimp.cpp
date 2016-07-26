@@ -4,6 +4,8 @@
 
 #include <boost/lexical_cast.hpp>
 
+#include <osgViewer/ViewerEventHandlers>
+
 #include <MyGUI_InputManager.h>
 #include <MyGUI_RenderManager.h>
 #include <MyGUI_Widget.h>
@@ -15,12 +17,11 @@
 #include <components/sdlutil/sdlinputwrapper.hpp>
 #include <components/sdlutil/sdlvideowrapper.hpp>
 
-#include "../engine.hpp"
-
 #include "../mwbase/world.hpp"
 #include "../mwbase/windowmanager.hpp"
 #include "../mwbase/soundmanager.hpp"
 #include "../mwbase/statemanager.hpp"
+#include "../mwbase/environment.hpp"
 
 #include "../mwworld/player.hpp"
 #include "../mwworld/class.hpp"
@@ -28,22 +29,22 @@
 #include "../mwworld/esmstore.hpp"
 
 #include "../mwmechanics/npcstats.hpp"
-
-using namespace ICS;
+#include "../mwmechanics/actorutil.hpp"
 
 namespace MWInput
 {
     InputManager::InputManager(
             SDL_Window* window,
             osg::ref_ptr<osgViewer::Viewer> viewer,
-            OMW::Engine& engine,
+            osg::ref_ptr<osgViewer::ScreenCaptureHandler> screenCaptureHandler,
             const std::string& userFile, bool userFileExists,
             const std::string& controllerBindingsFile, bool grab)
         : mWindow(window)
+        , mWindowVisible(true)
         , mViewer(viewer)
+        , mScreenCaptureHandler(screenCaptureHandler)
         , mJoystickLastUsed(false)
         , mPlayer(NULL)
-        , mEngine(engine)
         , mInputManager(NULL)
         , mVideoWrapper(NULL)
         , mUserFile(userFile)
@@ -52,7 +53,6 @@ namespace MWInput
         , mInvertY (Settings::Manager::getBool("invert y axis", "Input"))
         , mControlsDisabled(false)
         , mCameraSensitivity (Settings::Manager::getFloat("camera sensitivity", "Input"))
-        , mUISensitivity (Settings::Manager::getFloat("ui sensitivity", "Input"))
         , mCameraYMultiplier (Settings::Manager::getFloat("camera y multiplier", "Input"))
         , mPreviewPOVDelay(0.f)
         , mTimeIdle(0.f)
@@ -100,9 +100,9 @@ namespace MWInput
         mControlSwitch["playerviewswitch"]    = true;
         mControlSwitch["vanitymode"]          = true;
 
-        		/* Joystick Init */
+        /* Joystick Init */
 
-		//Load controller mappings
+        // Load controller mappings
 #if SDL_VERSION_ATLEAST(2,0,2)
         if(controllerBindingsFile!="")
         {
@@ -110,21 +110,22 @@ namespace MWInput
         }
 #endif
 
-		//Open all presently connected sticks
-		int numSticks = SDL_NumJoysticks();
-		for(int i = 0; i < numSticks; i++)
-		{
+        // Open all presently connected sticks
+        int numSticks = SDL_NumJoysticks();
+        for(int i = 0; i < numSticks; i++)
+        {
             if(SDL_IsGameController(i))
             {
                 SDL_ControllerDeviceEvent evt;
                 evt.which = i;
                 controllerAdded(mFakeDeviceID, evt);
+                std::cout << "Detected game controller: " << SDL_GameControllerNameForIndex(i) << std::endl;
             }
             else
             {
-                //ICS_LOG(std::string("Unusable controller plugged in: ")+SDL_JoystickNameForIndex(i));
+                std::cout << "Detected unusable controller: " << SDL_JoystickNameForIndex(i) << std::endl;
             }
-		}
+        }
 
         float uiScale = Settings::Manager::getFloat("scaling factor", "GUI");
         if (uiScale != 0.f)
@@ -153,6 +154,11 @@ namespace MWInput
         delete mInputManager;
 
         delete mVideoWrapper;
+    }
+
+    bool InputManager::isWindowVisible()
+    {
+        return mWindowVisible;
     }
 
     void InputManager::setPlayerControlsEnabled(bool enabled)
@@ -296,16 +302,20 @@ namespace MWInput
                 quickLoad();
                 break;
             case A_CycleSpellLeft:
-                MWBase::Environment::get().getWindowManager()->cycleSpell(false);
+                if (checkAllowedToUseItems())
+                    MWBase::Environment::get().getWindowManager()->cycleSpell(false);
                 break;
             case A_CycleSpellRight:
-                MWBase::Environment::get().getWindowManager()->cycleSpell(true);
+                if (checkAllowedToUseItems())
+                    MWBase::Environment::get().getWindowManager()->cycleSpell(true);
                 break;
             case A_CycleWeaponLeft:
-                MWBase::Environment::get().getWindowManager()->cycleWeapon(false);
+                if (checkAllowedToUseItems())
+                    MWBase::Environment::get().getWindowManager()->cycleWeapon(false);
                 break;
             case A_CycleWeaponRight:
-                MWBase::Environment::get().getWindowManager()->cycleWeapon(true);
+                if (checkAllowedToUseItems())
+                    MWBase::Environment::get().getWindowManager()->cycleWeapon(true);
                 break;
             case A_Sneak:
                 if (mSneakToggles)
@@ -340,6 +350,18 @@ namespace MWInput
         }
     }
 
+    bool InputManager::checkAllowedToUseItems() const
+    {
+        MWWorld::Ptr player = MWMechanics::getPlayer();
+        if (player.getClass().getNpcStats(player).isWerewolf())
+        {
+            // Cannot use items or spells while in werewolf form
+            MWBase::Environment::get().getWindowManager()->messageBox("#{sWerewolfRefusal}");
+            return false;
+        }
+        return true;
+    }
+
     void InputManager::update(float dt, bool disableControls, bool disableEvents)
     {
         mControlsDisabled = disableControls;
@@ -369,6 +391,9 @@ namespace MWInput
                 float yAxis = mInputBinder->getChannel(A_MoveForwardBackward)->getValue()*2.0f-1.0f;
                 float zAxis = mInputBinder->getChannel(A_LookUpDown)->getValue()*2.0f-1.0f;
                 const MyGUI::IntSize& viewSize = MyGUI::RenderManager::getInstance().getViewSize();
+
+                xAxis *= (1.5f - mInputBinder->getChannel(A_Use)->getValue());
+                yAxis *= (1.5f - mInputBinder->getChannel(A_Use)->getValue());
 
                 // We keep track of our own mouse position, so that moving the mouse while in
                 // game mode does not move the position of the GUI cursor
@@ -576,9 +601,6 @@ namespace MWInput
 
             if (it->first == "Input" && it->second == "camera sensitivity")
                 mCameraSensitivity = Settings::Manager::getFloat("camera sensitivity", "Input");
-
-            if (it->first == "Input" && it->second == "ui sensitivity")
-                mUISensitivity = Settings::Manager::getFloat("ui sensitivity", "Input");
 
             if (it->first == "Input" && it->second == "grab cursor")
                 mGrabCursor = Settings::Manager::getBool("grab cursor", "Input");
@@ -846,7 +868,7 @@ namespace MWInput
 
     void InputManager::windowVisibilityChange(bool visible)
     {
-        //TODO: Pause game?
+        mWindowVisible = visible;
     }
 
     void InputManager::windowResized(int x, int y)
@@ -896,6 +918,9 @@ namespace MWInput
         if (!mControlSwitch["playermagic"] || !mControlSwitch["playercontrols"])
             return;
 
+        if (!checkAllowedToUseItems())
+            return;
+
         // Not allowed if no spell selected
         MWWorld::InventoryStore& inventory = mPlayer->getPlayer().getClass().getInventoryStore(mPlayer->getPlayer());
         if (MWBase::Environment::get().getWindowManager()->getSelectedSpell().empty() &&
@@ -932,7 +957,7 @@ namespace MWInput
         if (!MWBase::Environment::get().getWindowManager()->getRestEnabled () || MWBase::Environment::get().getWindowManager()->isGuiMode ())
             return;
 
-        if(mPlayer->isInCombat()) {//Check if in combat
+        if(mPlayer->enemiesNearby()) {//Check if in combat
             MWBase::Environment::get().getWindowManager()->messageBox("#{sNotifyMessage2}"); //Nope,
             return;
         }
@@ -942,7 +967,8 @@ namespace MWInput
 
     void InputManager::screenshot()
     {
-        mEngine.screenshot();
+        mScreenCaptureHandler->setFramesToCapture(1);
+        mScreenCaptureHandler->captureNextFrame(*mViewer);
 
         MWBase::Environment::get().getWindowManager()->messageBox ("Screenshot saved");
     }
@@ -1009,13 +1035,8 @@ namespace MWInput
     {
         if (!mControlSwitch["playercontrols"])
             return;
-        MWWorld::Ptr player = MWBase::Environment::get().getWorld()->getPlayerPtr();
-        if (player.getClass().getNpcStats(player).isWerewolf())
-        {
-            // Cannot use items or spells while in werewolf form
-            MWBase::Environment::get().getWindowManager()->messageBox("#{sWerewolfRefusal}");
+        if (!checkAllowedToUseItems())
             return;
-        }
 
         if (!MWBase::Environment::get().getWindowManager()->isGuiMode())
             MWBase::Environment::get().getWindowManager()->activateQuickKey (index);
@@ -1026,13 +1047,8 @@ namespace MWInput
         if (!MWBase::Environment::get().getWindowManager()->isGuiMode ()
                 && MWBase::Environment::get().getWorld()->getGlobalFloat ("chargenstate")==-1)
         {
-            MWWorld::Ptr player = MWBase::Environment::get().getWorld()->getPlayerPtr();
-            if (player.getClass().getNpcStats(player).isWerewolf())
-            {
-                // Cannot use items or spells while in werewolf form
-                MWBase::Environment::get().getWindowManager()->messageBox("#{sWerewolfRefusal}");
+            if (!checkAllowedToUseItems())
                 return;
-            }
 
             MWBase::Environment::get().getWindowManager()->pushGuiMode (MWGui::GM_QuickKeysMenu);
 
@@ -1048,7 +1064,7 @@ namespace MWInput
     void InputManager::activate()
     {
         if (mControlSwitch["playercontrols"])
-            mEngine.activate();
+            mPlayer->activate();
     }
 
     void InputManager::toggleAutoMove()
@@ -1310,10 +1326,12 @@ namespace MWInput
 
         ICS::Control* c = mInputBinder->getChannel (action)->getAttachedControls ().front().control;
 
-        if (mInputBinder->getKeyBinding (c, ICS::Control::INCREASE) != SDL_SCANCODE_UNKNOWN)
-            return mInputBinder->scancodeToString (mInputBinder->getKeyBinding (c, ICS::Control::INCREASE));
-        else if (mInputBinder->getMouseButtonBinding (c, ICS::Control::INCREASE) != ICS_MAX_DEVICE_BUTTONS)
-            return "#{sMouse} " + boost::lexical_cast<std::string>(mInputBinder->getMouseButtonBinding (c, ICS::Control::INCREASE));
+        SDL_Scancode key = mInputBinder->getKeyBinding (c, ICS::Control::INCREASE);
+        unsigned int mouse = mInputBinder->getMouseButtonBinding (c, ICS::Control::INCREASE);
+        if (key != SDL_SCANCODE_UNKNOWN)
+            return MyGUI::TextIterator::toTagsString(mInputBinder->scancodeToString (key));
+        else if (mouse != ICS_MAX_DEVICE_BUTTONS)
+            return "#{sMouse} " + boost::lexical_cast<std::string>(mouse);
         else
             return "#{sNone}";
     }

@@ -28,6 +28,11 @@ namespace MyGUI
     class ImageBox;
 }
 
+namespace MWWorld
+{
+    class ESMStore;
+}
+
 namespace Compiler
 {
     class Extensions;
@@ -119,6 +124,9 @@ namespace MWGui
                   Translation::Storage& translationDataStorage, ToUTF8::FromType encoding, bool exportFonts, const std::map<std::string,std::string>& fallbackMap, const std::string& versionDescription);
     virtual ~WindowManager();
 
+    /// Set the ESMStore to use for retrieving of GUI-related strings.
+    void setStore (const MWWorld::ESMStore& store);
+
     void initUI();
     void renderWorldMap();
 
@@ -173,11 +181,12 @@ namespace MWGui
     virtual MWGui::ConfirmationDialog* getConfirmationDialog();
     virtual MWGui::TradeWindow* getTradeWindow();
 
+    /// Make the player use an item, while updating GUI state accordingly
+    virtual void useItem(const MWWorld::Ptr& item);
+
     virtual void updateSpellWindow();
 
     virtual void setConsoleSelectedObject(const MWWorld::Ptr& object);
-
-    virtual void wmUpdateFps(float fps);
 
     ///< Set value for the given ID.
     virtual void setValue (const std::string& id, const MWMechanics::AttributeValue& value);
@@ -195,7 +204,7 @@ namespace MWGui
     virtual void configureSkills (const SkillList& major, const SkillList& minor); ///< configure skill groups, each set contains the skill ID for that group.
     virtual void updateSkillArea();                                                ///< update display of skills, factions, birth sign, reputation and bounty
 
-    virtual void changeCell(MWWorld::CellStore* cell); ///< change the active cell
+    virtual void changeCell(const MWWorld::CellStore* cell); ///< change the active cell
 
     virtual void setFocusObject(const MWWorld::Ptr& focus);
     virtual void setFocusObjectScreenCoords(float min_x, float min_y, float max_x, float max_y);
@@ -365,12 +374,13 @@ namespace MWGui
     virtual std::string correctIconPath(const std::string& path);
     virtual std::string correctBookartPath(const std::string& path, int width, int height);
     virtual std::string correctTexturePath(const std::string& path);
+    virtual bool textureExists(const std::string& path);
 
-    void requestMap(std::set<MWWorld::CellStore*> cells);
     void removeCell(MWWorld::CellStore* cell);
     void writeFog(MWWorld::CellStore* cell);
 
   private:
+    const MWWorld::ESMStore* mStore;
     Resource::ResourceSystem* mResourceSystem;
 
     osgMyGUI::Platform* mGuiPlatform;
@@ -482,8 +492,6 @@ namespace MWGui
     void updateVisible(); // Update visibility of all windows based on mode, shown and allowed settings
 
     void updateMap();
-
-    float mFPS;
 
     std::map<std::string, std::string> mFallbackMap;
     

@@ -1,4 +1,3 @@
-
 #include "documentmanager.hpp"
 
 #include <algorithm>
@@ -42,6 +41,7 @@ CSMDoc::DocumentManager::DocumentManager (const Files::ConfigurationManager& con
 CSMDoc::DocumentManager::~DocumentManager()
 {
     mLoaderThread.quit();
+    mLoader.stop();
     mLoader.hasThingsToDo().wakeAll();
     mLoaderThread.wait();
 
@@ -57,9 +57,23 @@ bool CSMDoc::DocumentManager::isEmpty()
 void CSMDoc::DocumentManager::addDocument (const std::vector<boost::filesystem::path>& files, const boost::filesystem::path& savePath,
     bool new_)
 {
-    Document *document = new Document (mVFS, mConfiguration, files, new_, savePath, mResDir, mEncoding, mResourcesManager, mBlacklistedScripts);
+    Document *document = makeDocument (files, savePath, new_);
+    insertDocument (document);
+}
 
+CSMDoc::Document *CSMDoc::DocumentManager::makeDocument (
+    const std::vector< boost::filesystem::path >& files,
+    const boost::filesystem::path& savePath, bool new_)
+{
+    return new Document (mVFS, mConfiguration, files, new_, savePath, mResDir, &mFallbackMap, mEncoding, mResourcesManager, mBlacklistedScripts);
+}
+
+void CSMDoc::DocumentManager::insertDocument (CSMDoc::Document *document)
+{
     mDocuments.push_back (document);
+
+    connect (document, SIGNAL (mergeDone (CSMDoc::Document*)),
+        this, SLOT (insertDocument (CSMDoc::Document*)));
 
     emit loadRequest (document);
 
@@ -73,6 +87,8 @@ void CSMDoc::DocumentManager::removeDocument (CSMDoc::Document *document)
     if (iter==mDocuments.end())
         throw std::runtime_error ("removing invalid document");
 
+    emit documentAboutToBeRemoved (document);
+
     mDocuments.erase (iter);
     document->deleteLater();
 
@@ -83,6 +99,11 @@ void CSMDoc::DocumentManager::removeDocument (CSMDoc::Document *document)
 void CSMDoc::DocumentManager::setResourceDir (const boost::filesystem::path& parResDir)
 {
     mResDir = boost::filesystem::system_complete(parResDir);
+}
+
+void CSMDoc::DocumentManager::setFallbackMap(const std::map<std::string, std::string>& fallbackMap)
+{
+    mFallbackMap = Fallback::Map(fallbackMap);
 }
 
 void CSMDoc::DocumentManager::setEncoding (ToUTF8::FromType encoding)

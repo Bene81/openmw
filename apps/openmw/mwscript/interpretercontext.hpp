@@ -27,9 +27,6 @@ namespace MWScript
             Locals *mLocals;
             mutable MWWorld::Ptr mReference;
 
-            MWWorld::Ptr mActivated;
-            bool mActivationHandled;
-
             std::string mTargetId;
 
             /// If \a id is empty, a reference the script is run from is returned or in case
@@ -131,16 +128,6 @@ namespace MWScript
             virtual float getDistance (const std::string& name, const std::string& id = "") const;
             ///< @note if \a id is empty, assumes an implicit reference
 
-            bool hasBeenActivated (const MWWorld::Ptr& ptr);
-            ///< \attention Calling this function for the right reference will mark the action as
-            /// been handled.
-
-            bool hasActivationBeenHandled() const;
-
-            void activate (const MWWorld::Ptr& ptr);
-            ///< Store reference acted upon. The actual execution of the action does not
-            /// take place here.
-
             void executeActivation(MWWorld::Ptr ptr, MWWorld::Ptr actor);
             ///< Execute the activation action for this ptr. If ptr is mActivated, mark activation as handled.
 
@@ -167,7 +154,7 @@ namespace MWScript
             MWWorld::Ptr getReference(bool required=true);
             ///< Reference, that the script is running from (can be empty)
 
-            void updatePtr(const MWWorld::Ptr& updated);
+            void updatePtr(const MWWorld::Ptr& base, const MWWorld::Ptr& updated);
             ///< Update the Ptr stored in mReference, if there is one stored there. Should be called after the reference has been moved to a new cell.
 
             virtual std::string getTargetId() const;

@@ -95,14 +95,15 @@ bool CSMWorld::IdTree::setData (const QModelIndex &index, const QVariant &value,
             const std::pair<int, int>& parentAddress(unfoldIndexAddress(index.internalId()));
 
             mNestedCollection->setNestedData(parentAddress.first, parentAddress.second, value, index.row(), index.column());
-
             emit dataChanged(index, index);
 
-            // Modifying a value can also change the Modified status of a record (located in the parent row).
-            // To track this, we inform about the change of a whole parent row.
-            QModelIndex parentRowStart = this->index(index.parent().row(), 0);
-            QModelIndex parentRowEnd = this->index(index.parent().row(), columnCount(index.parent()) - 1);
-            emit dataChanged(parentRowStart, parentRowEnd);
+            // Modifying a value can also change the Modified status of a record.
+            int stateColumn = searchColumnIndex(Columns::ColumnId_Modification);
+            if (stateColumn != -1)
+            {
+                QModelIndex stateIndex = this->index(index.parent().row(), stateColumn);
+                emit dataChanged(stateIndex, stateIndex);
+            }
 
             return true;
         }
@@ -263,7 +264,7 @@ void CSMWorld::IdTree::setNestedTable(const QModelIndex& index, const CSMWorld::
 CSMWorld::NestedTableWrapperBase* CSMWorld::IdTree::nestedTable(const QModelIndex& index) const
 {
     if (!hasChildren(index))
-        throw std::logic_error("Tried to retrive nested table, but index has no children");
+        throw std::logic_error("Tried to retrieve nested table, but index has no children");
 
     return mNestedCollection->nestedTable(index.row(), index.column());
 }

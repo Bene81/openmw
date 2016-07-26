@@ -153,6 +153,34 @@ struct TypesetBookImpl : TypesetBook
         visitRuns (top, bottom, NULL, visitor);
     }
 
+    /// hit test with a margin for error. only hits on interactive text fragments are reported.
+    StyleImpl * hitTestWithMargin (int left, int top)
+    {
+        StyleImpl * hit = hitTest(left, top);
+        if (hit && hit->mInteractiveId > 0)
+            return hit;
+
+        const int maxMargin = 10;
+        for (int margin=1; margin < maxMargin; ++margin)
+        {
+            for (int i=0; i<4; ++i)
+            {
+                if (i==0)
+                    hit = hitTest(left, top-margin);
+                else if (i==1)
+                    hit = hitTest(left, top+margin);
+                else if (i==2)
+                    hit = hitTest(left-margin, top);
+                else
+                    hit = hitTest(left+margin, top);
+
+                if (hit && hit->mInteractiveId > 0)
+                    return hit;
+            }
+        }
+        return NULL;
+    }
+
     StyleImpl * hitTest (int left, int top) const
     {
         for (Sections::const_iterator i = mSections.begin (); i != mSections.end (); ++i)
@@ -916,15 +944,15 @@ public:
         left -= mCroppedParent->getAbsoluteLeft ();
         top  -= mCroppedParent->getAbsoluteTop  ();
 
-        Style * Hit = mBook->hitTest (left, mViewTop + top);
+        Style * hit = mBook->hitTestWithMargin (left, mViewTop + top);
 
         if (mLastDown == MyGUI::MouseButton::None)
         {
-            if (Hit != mFocusItem)
+            if (hit != mFocusItem)
             {
                 dirtyFocusItem ();
 
-                mFocusItem = Hit;
+                mFocusItem = hit;
                 mItemActive = false;
 
                 dirtyFocusItem ();
@@ -933,7 +961,7 @@ public:
         else
         if (mFocusItem != 0)
         {
-            bool newItemActive = Hit == mFocusItem;
+            bool newItemActive = hit == mFocusItem;
 
             if (newItemActive != mItemActive)
             {
@@ -949,12 +977,18 @@ public:
         if (!mBook)
             return;
 
-        left -= mCroppedParent->getAbsoluteLeft ();
-        top  -= mCroppedParent->getAbsoluteTop  ();
+        // work around inconsistency in MyGUI where the mouse press coordinates aren't
+        // transformed by the current Layer (even though mouse *move* events are).
+        MyGUI::IntPoint pos (left, top);
+#if MYGUI_VERSION < MYGUI_DEFINE_VERSION(3,2,3)
+        pos = mNode->getLayer()->getPosition(left, top);
+#endif
+        pos.left -= mCroppedParent->getAbsoluteLeft ();
+        pos.top  -= mCroppedParent->getAbsoluteTop  ();
 
         if (mLastDown == MyGUI::MouseButton::None)
         {
-            mFocusItem = mBook->hitTest (left, mViewTop + top);
+            mFocusItem = mBook->hitTestWithMargin (pos.left, mViewTop + pos.top);
             mItemActive = true;
 
             dirtyFocusItem ();
@@ -968,14 +1002,21 @@ public:
         if (!mBook)
             return;
 
-        left -= mCroppedParent->getAbsoluteLeft ();
-        top  -= mCroppedParent->getAbsoluteTop  ();
+        // work around inconsistency in MyGUI where the mouse release coordinates aren't
+        // transformed by the current Layer (even though mouse *move* events are).
+        MyGUI::IntPoint pos (left, top);
+#if MYGUI_VERSION < MYGUI_DEFINE_VERSION(3,2,3)
+        pos = mNode->getLayer()->getPosition(left, top);
+#endif
+
+        pos.left -= mCroppedParent->getAbsoluteLeft ();
+        pos.top  -= mCroppedParent->getAbsoluteTop  ();
 
         if (mLastDown == id)
         {
-            Style * mItem = mBook->hitTest (left, mViewTop + top);
+            Style * item = mBook->hitTestWithMargin (pos.left, mViewTop + pos.top);
 
-            bool clicked = mFocusItem == mItem;
+            bool clicked = mFocusItem == item;
 
             mItemActive = false;
 
@@ -983,8 +1024,8 @@ public:
 
             mLastDown = MyGUI::MouseButton::None;
 
-            if (clicked && mLinkClicked && mItem && mItem->mInteractiveId != 0)
-                mLinkClicked (mItem->mInteractiveId);
+            if (clicked && mLinkClicked && item && item->mInteractiveId != 0)
+                mLinkClicked (item->mInteractiveId);
         }
     }
 
@@ -1112,8 +1153,6 @@ public:
 
     void createDrawItem(MyGUI::ITexture* texture, MyGUI::ILayerNode* node)
     {
-        //test ();
-
         mNode = node;
 
         for (ActiveTextFormats::iterator i = mActiveTextFormats.begin (); i != mActiveTextFormats.end (); ++i)
@@ -1181,6 +1220,11 @@ public:
 
     void _updateView ()
     {
+        _checkMargin();
+
+        if (mNode != NULL)
+            for (ActiveTextFormats::iterator i = mActiveTextFormats.begin (); i != mActiveTextFormats.end (); ++i)
+                mNode->outOfDate (i->second->mRenderItem);
     }
 
     void _correctView()
@@ -1208,72 +1252,65 @@ class BookPageImpl : public BookPage
 MYGUI_RTTI_DERIVED(BookPage)
 public:
 
+    BookPageImpl()
+        : mPageDisplay(NULL)
+    {
+    }
+
     void showPage (TypesetBook::Ptr book, size_t page)
     {
-        if (PageDisplay* pd = dynamic_cast <PageDisplay*> (getSubWidgetText ()))
-            pd->showPage (book, page);
-        else
-            throw std::runtime_error ("The main sub-widget for a BookPage must be a PageDisplay.");
+        mPageDisplay->showPage (book, page);
     }
 
     void adviseLinkClicked (boost::function <void (InteractiveId)> linkClicked)
     {
-        if (PageDisplay* pd = dynamic_cast <PageDisplay*> (getSubWidgetText ()))
-        {
-            pd->mLinkClicked = linkClicked;
-        }
+        mPageDisplay->mLinkClicked = linkClicked;
     }
 
     void unadviseLinkClicked ()
     {
-        if (PageDisplay* pd = dynamic_cast <PageDisplay*> (getSubWidgetText ()))
-        {
-            pd->mLinkClicked = boost::function <void (InteractiveId)> ();
-        }
+        mPageDisplay->mLinkClicked = boost::function <void (InteractiveId)> ();
     }
 
 protected:
+
+    virtual void initialiseOverride()
+    {
+        Base::initialiseOverride();
+
+        if (getSubWidgetText())
+        {
+            mPageDisplay = getSubWidgetText()->castType<PageDisplay>();
+        }
+        else
+        {
+            throw std::runtime_error("BookPage unable to find page display sub widget");
+        }
+    }
+
     void onMouseLostFocus(Widget* _new)
     {
         // NOTE: MyGUI also fires eventMouseLostFocus for widgets that are about to be destroyed (if they had focus).
         // Child widgets may already be destroyed! So be careful.
-        if (PageDisplay* pd = dynamic_cast <PageDisplay*> (getSubWidgetText ()))
-        {
-            pd->onMouseLostFocus ();
-        }
-        else
-            Widget::onMouseLostFocus (_new);
+        mPageDisplay->onMouseLostFocus ();
     }
 
     void onMouseMove(int left, int top)
     {
-        if (PageDisplay* pd = dynamic_cast <PageDisplay*> (getSubWidgetText ()))
-        {
-            pd->onMouseMove (left, top);
-        }
-        else
-            Widget::onMouseMove (left, top);
+        mPageDisplay->onMouseMove (left, top);
     }
 
     void onMouseButtonPressed (int left, int top, MyGUI::MouseButton id)
     {
-        if (PageDisplay* pd = dynamic_cast <PageDisplay*> (getSubWidgetText ()))
-        {
-            pd->onMouseButtonPressed (left, top, id);
-        }
-        else
-            Widget::onMouseButtonPressed (left, top, id);
+        mPageDisplay->onMouseButtonPressed (left, top, id);
     }
 
     void onMouseButtonReleased(int left, int top, MyGUI::MouseButton id)
     {
-        if (PageDisplay* pd = dynamic_cast <PageDisplay*> (getSubWidgetText ()))
-        {
-            pd->onMouseButtonReleased (left, top, id);
-        }
-        else
-            Widget::onMouseButtonReleased (left, top, id);
+        mPageDisplay->onMouseButtonReleased (left, top, id);
     }
+
+    PageDisplay* mPageDisplay;
 };
 
 void BookPage::registerMyGUIComponents ()

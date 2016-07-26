@@ -1,6 +1,7 @@
 #include "spellcasting.hpp"
 
 #include <cfloat>
+#include <limits>
 
 #include <boost/format.hpp>
 
@@ -18,14 +19,13 @@
 #include "../mwworld/class.hpp"
 #include "../mwworld/cellstore.hpp"
 #include "../mwworld/esmstore.hpp"
-
 #include "../mwworld/inventorystore.hpp"
 
 #include "../mwrender/animation.hpp"
 
 #include "magiceffects.hpp"
 #include "npcstats.hpp"
-#include "summoning.hpp"
+#include "actorutil.hpp"
 
 namespace
 {
@@ -60,13 +60,6 @@ namespace
         }
     }
 
-    void applyDynamicStatsEffect(int attribute, const MWWorld::Ptr& target, float magnitude)
-    {
-        MWMechanics::DynamicStat<float> value = target.getClass().getCreatureStats(target).getDynamic(attribute);
-        value.setCurrent(value.getCurrent()+magnitude, attribute == 2);
-        target.getClass().getCreatureStats(target).setDynamic(attribute, value);
-    }
-
 }
 
 namespace MWMechanics
@@ -92,7 +85,7 @@ namespace MWMechanics
         if (stats.getMagicEffects().get(ESM::MagicEffect::Silence).getMagnitude())
             return 0;
 
-        float y = FLT_MAX;
+        float y = std::numeric_limits<float>::max();
         float lowestSkill = 0;
 
         for (std::vector<ESM::ENAMstruct>::const_iterator it = spell->mEffects.mList.begin(); it != spell->mEffects.mList.end(); ++it)
@@ -121,6 +114,9 @@ namespace MWMechanics
             }
         }
 
+        if (spell->mData.mType == ESM::Spell::ST_Power)
+            return stats.getSpells().canUsePower(spell) ? 100 : 0;
+
         if (spell->mData.mType != ESM::Spell::ST_Spell)
             return 100;
 
@@ -133,7 +129,7 @@ namespace MWMechanics
         int actorLuck = stats.getAttribute(ESM::Attribute::Luck).getModified();
 
         float castChance = (lowestSkill - spell->mData.mCost + castBonus + 0.2f * actorWillpower + 0.1f * actorLuck) * stats.getFatigueTerm();
-        if (MWBase::Environment::get().getWorld()->getGodModeState() && actor == MWBase::Environment::get().getWorld()->getPlayerPtr())
+        if (MWBase::Environment::get().getWorld()->getGodModeState() && actor == getPlayer())
             castChance = 100;
 
         if (!cap)
@@ -332,14 +328,15 @@ namespace MWMechanics
         const ESM::Spell* spell = MWBase::Environment::get().getWorld()->getStore().get<ESM::Spell>().search (mId);
         if (spell && (spell->mData.mType == ESM::Spell::ST_Disease || spell->mData.mType == ESM::Spell::ST_Blight))
         {
-            float x = (spell->mData.mType == ESM::Spell::ST_Disease) ?
-                        target.getClass().getCreatureStats(target).getMagicEffects().get(ESM::MagicEffect::ResistCommonDisease).getMagnitude()
-                      : target.getClass().getCreatureStats(target).getMagicEffects().get(ESM::MagicEffect::ResistBlightDisease).getMagnitude();
+            int requiredResistance = (spell->mData.mType == ESM::Spell::ST_Disease) ?
+                ESM::MagicEffect::ResistCommonDisease
+                : ESM::MagicEffect::ResistBlightDisease;
+            float x = target.getClass().getCreatureStats(target).getMagicEffects().get(requiredResistance).getMagnitude();
 
             if (Misc::Rng::roll0to99() <= x)
             {
                 // Fully resisted, show message
-                if (target == MWBase::Environment::get().getWorld()->getPlayerPtr())
+                if (target == getPlayer())
                     MWBase::Environment::get().getWindowManager()->messageBox("#{sMagicPCResisted}");
                 return;
             }
@@ -357,27 +354,7 @@ namespace MWMechanics
         if (target.getClass().isActor())
             targetEffects += target.getClass().getCreatureStats(target).getMagicEffects();
 
-        bool castByPlayer = (!caster.isEmpty() && caster == MWBase::Environment::get().getWorld()->getPlayerPtr());
-
-        // Try absorbing if it's a spell
-        // NOTE: Vanilla does this once per effect source instead of adding the % from all sources together, not sure
-        // if that is worth replicating.
-        bool absorbed = false;
-        if (spell && caster != target && target.getClass().isActor())
-        {
-            float absorb = target.getClass().getCreatureStats(target).getMagicEffects().get(ESM::MagicEffect::SpellAbsorption).getMagnitude();
-            absorbed = (Misc::Rng::roll0to99() < absorb);
-            if (absorbed)
-            {
-                const ESM::Static* absorbStatic = MWBase::Environment::get().getWorld()->getStore().get<ESM::Static>().find ("VFX_Absorb");
-                MWBase::Environment::get().getWorld()->getAnimation(target)->addEffect(
-                            "meshes\\" + absorbStatic->mModel, ESM::MagicEffect::SpellAbsorption, false, "");
-                // Magicka is increased by cost of spell
-                DynamicStat<float> magicka = target.getClass().getCreatureStats(target).getMagicka();
-                magicka.setCurrent(magicka.getCurrent() + spell->mData.mCost);
-                target.getClass().getCreatureStats(target).setMagicka(magicka);
-            }
-        }
+        bool castByPlayer = (!caster.isEmpty() && caster == getPlayer());
 
         for (std::vector<ESM::ENAMstruct>::const_iterator effectIt (effects.mList.begin());
             effectIt!=effects.mList.end(); ++effectIt)
@@ -392,11 +369,36 @@ namespace MWMechanics
             if (!checkEffectTarget(effectIt->mEffectID, target, castByPlayer))
                 continue;
 
+            // caster needs to be an actor for linked effects (e.g. Absorb)
+            if (magicEffect->mData.mFlags & ESM::MagicEffect::CasterLinked
+                    && (caster.isEmpty() || !caster.getClass().isActor()))
+                continue;
+
             // If player is healing someone, show the target's HP bar
             if (castByPlayer && target != caster
                     && effectIt->mEffectID == ESM::MagicEffect::RestoreHealth
                     && target.getClass().isActor())
                 MWBase::Environment::get().getWindowManager()->setEnemy(target);
+
+            // Try absorbing if it's a spell
+            // NOTE: Vanilla does this once per spell absorption effect source instead of adding the % from all sources together, not sure
+            // if that is worth replicating.
+            bool absorbed = false;
+            if (spell && caster != target && target.getClass().isActor())
+            {
+                float absorb = target.getClass().getCreatureStats(target).getMagicEffects().get(ESM::MagicEffect::SpellAbsorption).getMagnitude();
+                absorbed = (Misc::Rng::roll0to99() < absorb);
+                if (absorbed)
+                {
+                    const ESM::Static* absorbStatic = MWBase::Environment::get().getWorld()->getStore().get<ESM::Static>().find ("VFX_Absorb");
+                    MWBase::Environment::get().getWorld()->getAnimation(target)->addEffect(
+                                "meshes\\" + absorbStatic->mModel, ESM::MagicEffect::SpellAbsorption, false, "");
+                    // Magicka is increased by cost of spell
+                    DynamicStat<float> magicka = target.getClass().getCreatureStats(target).getMagicka();
+                    magicka.setCurrent(magicka.getCurrent() + spell->mData.mCost);
+                    target.getClass().getCreatureStats(target).setMagicka(magicka);
+                }
+            }
 
             float magnitudeMult = 1;
             if (magicEffect->mData.mFlags & ESM::MagicEffect::Harmful && target.getClass().isActor())
@@ -432,7 +434,7 @@ namespace MWMechanics
                     if (magnitudeMult == 0)
                     {
                         // Fully resisted, show message
-                        if (target == MWBase::Environment::get().getWorld()->getPlayerPtr())
+                        if (target == getPlayer())
                             MWBase::Environment::get().getWindowManager()->messageBox("#{sMagicPCResisted}");
                         else if (castByPlayer)
                             MWBase::Environment::get().getWindowManager()->messageBox("#{sMagicTargetResisted}");
@@ -446,42 +448,18 @@ namespace MWMechanics
                 float magnitude = effectIt->mMagnMin + (effectIt->mMagnMax - effectIt->mMagnMin) * random;
                 magnitude *= magnitudeMult;
 
-                bool hasDuration = !(magicEffect->mData.mFlags & ESM::MagicEffect::NoDuration);
-                if (target.getClass().isActor() && hasDuration && effectIt->mDuration > 0)
+                if (!target.getClass().isActor())
                 {
-                    ActiveSpells::ActiveEffect effect;
-                    effect.mEffectId = effectIt->mEffectID;
-                    effect.mArg = MWMechanics::EffectKey(*effectIt).mArg;
-                    effect.mDuration = static_cast<float>(effectIt->mDuration);
-                    effect.mMagnitude = magnitude;
-
-                    targetEffects.add(MWMechanics::EffectKey(*effectIt), MWMechanics::EffectParam(effect.mMagnitude));
-
-                    appliedLastingEffects.push_back(effect);
-
-                    // For absorb effects, also apply the effect to the caster - but with a negative
-                    // magnitude, since we're transfering stats from the target to the caster
-                    if (!caster.isEmpty() && caster.getClass().isActor())
-                    {
-                        for (int i=0; i<5; ++i)
-                        {
-                            if (effectIt->mEffectID == ESM::MagicEffect::AbsorbAttribute+i)
-                            {
-                                std::vector<ActiveSpells::ActiveEffect> effects;
-                                ActiveSpells::ActiveEffect effect_ = effect;
-                                effect_.mMagnitude *= -1;
-                                effects.push_back(effect_);
-                                // Also make sure to set casterActorId = target, so that the effect on the caster gets purged when the target dies
-                                caster.getClass().getCreatureStats(caster).getActiveSpells().addSpell("", true,
-                                            effects, mSourceName, target.getClass().getCreatureStats(target).getActorId());
-                            }
-                        }
-                    }
+                    // non-actor objects have no list of active magic effects, so have to apply instantly
+                    if (!applyInstantEffect(target, caster, EffectKey(*effectIt), magnitude))
+                        continue;
                 }
-                else
+                else // target.getClass().isActor() == true
                 {
-                    if (hasDuration && target.getClass().isActor())
+                    bool hasDuration = !(magicEffect->mData.mFlags & ESM::MagicEffect::NoDuration);
+                    if (hasDuration && effectIt->mDuration == 0)
                     {
+                        // duration 0 means apply full magnitude instantly
                         bool wasDead = target.getClass().getCreatureStats(target).isDead();
                         effectTick(target.getClass().getCreatureStats(target), target, EffectKey(*effectIt), magnitude);
                         bool isDead = target.getClass().getCreatureStats(target).isDead();
@@ -490,7 +468,37 @@ namespace MWMechanics
                             MWBase::Environment::get().getMechanicsManager()->actorKilled(target, caster);
                     }
                     else
-                        applyInstantEffect(target, caster, EffectKey(*effectIt), magnitude);
+                    {
+                        // add to list of active effects, to apply in next frame
+                        ActiveSpells::ActiveEffect effect;
+                        effect.mEffectId = effectIt->mEffectID;
+                        effect.mArg = MWMechanics::EffectKey(*effectIt).mArg;
+                        effect.mDuration = static_cast<float>(effectIt->mDuration);
+                        effect.mMagnitude = magnitude;
+
+                        targetEffects.add(MWMechanics::EffectKey(*effectIt), MWMechanics::EffectParam(effect.mMagnitude));
+
+                        appliedLastingEffects.push_back(effect);
+
+                        // For absorb effects, also apply the effect to the caster - but with a negative
+                        // magnitude, since we're transfering stats from the target to the caster
+                        if (!caster.isEmpty() && caster.getClass().isActor())
+                        {
+                            for (int i=0; i<5; ++i)
+                            {
+                                if (effectIt->mEffectID == ESM::MagicEffect::AbsorbAttribute+i)
+                                {
+                                    std::vector<ActiveSpells::ActiveEffect> effects;
+                                    ActiveSpells::ActiveEffect effect_ = effect;
+                                    effect_.mMagnitude *= -1;
+                                    effects.push_back(effect_);
+                                    // Also make sure to set casterActorId = target, so that the effect on the caster gets purged when the target dies
+                                    caster.getClass().getCreatureStats(caster).getActiveSpells().addSpell("", true,
+                                                effects, mSourceName, target.getClass().getCreatureStats(target).getActorId());
+                                }
+                            }
+                        }
+                    }
                 }
 
                 // Re-casting a summon effect will remove the creature from previous castings of that effect.
@@ -500,7 +508,7 @@ namespace MWMechanics
                     std::map<CreatureStats::SummonKey, int>::iterator found = targetStats.getSummonedCreatureMap().find(std::make_pair(effectIt->mEffectID, mId));
                     if (found != targetStats.getSummonedCreatureMap().end())
                     {
-                        cleanupSummonedCreature(targetStats, found->second);
+                        MWBase::Environment::get().getMechanicsManager()->cleanupSummonedCreature(target, found->second);
                         targetStats.getSummonedCreatureMap().erase(found);
                     }
                 }
@@ -540,7 +548,7 @@ namespace MWMechanics
         }
 
         if (!exploded)
-            MWBase::Environment::get().getWorld()->explodeSpell(mHitPosition, effects, caster, range, mId, mSourceName);
+            MWBase::Environment::get().getWorld()->explodeSpell(mHitPosition, effects, caster, target, range, mId, mSourceName);
 
         if (!reflectedEffects.mList.empty())
             inflict(caster, target, reflectedEffects, range, true, exploded);
@@ -559,19 +567,20 @@ namespace MWMechanics
             target.getClass().onHit(target, 0.f, true, MWWorld::Ptr(), caster, true);
     }
 
-    void CastSpell::applyInstantEffect(const MWWorld::Ptr &target, const MWWorld::Ptr &caster, const MWMechanics::EffectKey& effect, float magnitude)
+    bool CastSpell::applyInstantEffect(const MWWorld::Ptr &target, const MWWorld::Ptr &caster, const MWMechanics::EffectKey& effect, float magnitude)
     {
         short effectId = effect.mId;
-        if (!target.getClass().isActor())
+        if (target.getClass().canLock(target))
         {
             if (effectId == ESM::MagicEffect::Lock)
             {
                 if (target.getCellRef().getLockLevel() < magnitude) //If the door is not already locked to a higher value, lock it to spell magnitude
                 {
-                    if (caster == MWBase::Environment::get().getWorld()->getPlayerPtr())
+                    if (caster == getPlayer())
                         MWBase::Environment::get().getWindowManager()->messageBox("#{sMagicLockSuccess}");
-                    target.getCellRef().setLockLevel(static_cast<int>(magnitude));
+                    target.getClass().lock(target, static_cast<int>(magnitude));
                 }
+                return true;
             }
             else if (effectId == ESM::MagicEffect::Open)
             {
@@ -583,50 +592,62 @@ namespace MWMechanics
                         if (!caster.isEmpty() && caster.getClass().isActor())
                             MWBase::Environment::get().getMechanicsManager()->objectOpened(caster, target);
 
-                        if (caster == MWBase::Environment::get().getWorld()->getPlayerPtr())
+                        if (caster == getPlayer())
                             MWBase::Environment::get().getWindowManager()->messageBox("#{sMagicOpenSuccess}");
                     }
-                    target.getCellRef().setLockLevel(-abs(target.getCellRef().getLockLevel()));
+                    target.getClass().unlock(target);
                 }
                 else
                     MWBase::Environment::get().getSoundManager()->playSound3D(target, "Open Lock Fail", 1.f, 1.f);
+                return true;
             }
         }
-        else
+        else if (target.getClass().isActor())
         {
-            if (effectId == ESM::MagicEffect::CurePoison)
+            switch (effectId)
+            {
+            case ESM::MagicEffect::CurePoison:
                 target.getClass().getCreatureStats(target).getActiveSpells().purgeEffect(ESM::MagicEffect::Poison);
-            else if (effectId == ESM::MagicEffect::CureParalyzation)
+                return true;
+            case ESM::MagicEffect::CureParalyzation:
                 target.getClass().getCreatureStats(target).getActiveSpells().purgeEffect(ESM::MagicEffect::Paralyze);
-            else if (effectId == ESM::MagicEffect::CureCommonDisease)
+                return true;
+            case ESM::MagicEffect::CureCommonDisease:
                 target.getClass().getCreatureStats(target).getSpells().purgeCommonDisease();
-            else if (effectId == ESM::MagicEffect::CureBlightDisease)
+                return true;
+            case ESM::MagicEffect::CureBlightDisease:
                 target.getClass().getCreatureStats(target).getSpells().purgeBlightDisease();
-            else if (effectId == ESM::MagicEffect::CureCorprusDisease)
+                return true;
+            case ESM::MagicEffect::CureCorprusDisease:
                 target.getClass().getCreatureStats(target).getSpells().purgeCorprusDisease();
-            else if (effectId == ESM::MagicEffect::Dispel)
+                return true;
+            case ESM::MagicEffect::Dispel:
                 target.getClass().getCreatureStats(target).getActiveSpells().purgeAll(magnitude);
-            else if (effectId == ESM::MagicEffect::RemoveCurse)
+                return true;
+            case ESM::MagicEffect::RemoveCurse:
                 target.getClass().getCreatureStats(target).getSpells().purgeCurses();
+                return true;
+            }
 
-            if (target != MWBase::Environment::get().getWorld()->getPlayerPtr())
-                return;
-            if (!MWBase::Environment::get().getWorld()->isTeleportingEnabled())
-                return;
+            if (target != getPlayer())
+                return false;
 
             if (effectId == ESM::MagicEffect::DivineIntervention)
             {
                 MWBase::Environment::get().getWorld()->teleportToClosestMarker(target, "divinemarker");
+                return true;
             }
             else if (effectId == ESM::MagicEffect::AlmsiviIntervention)
             {
                 MWBase::Environment::get().getWorld()->teleportToClosestMarker(target, "templemarker");
+                return true;
             }
 
             else if (effectId == ESM::MagicEffect::Mark)
             {
                 MWBase::Environment::get().getWorld()->getPlayer().markPosition(
                             target.getCell(), target.getRefData().getPosition());
+                return true;
             }
             else if (effectId == ESM::MagicEffect::Recall)
             {
@@ -640,8 +661,10 @@ namespace MWMechanics
                                             markedPosition, false);
                     action.execute(target);
                 }
+                return true;
             }
         }
+        return false;
     }
 
 
@@ -662,7 +685,7 @@ namespace MWMechanics
         throw std::runtime_error("ID type cannot be casted");
     }
 
-    bool CastSpell::cast(const MWWorld::Ptr &item)
+    bool CastSpell::cast(const MWWorld::Ptr &item, bool launchProjectile)
     {
         std::string enchantmentName = item.getClass().getEnchantment(item);
         if (enchantmentName.empty())
@@ -673,7 +696,7 @@ namespace MWMechanics
 
         const ESM::Enchantment* enchantment = MWBase::Environment::get().getWorld()->getStore().get<ESM::Enchantment>().find(enchantmentName);
 
-        mStack = (enchantment->mData.mType == ESM::Enchantment::CastOnce);
+        mStack = false;
 
         // Check if there's enough charge left
         if (enchantment->mData.mType == ESM::Enchantment::WhenUsed || enchantment->mData.mType == ESM::Enchantment::WhenStrikes)
@@ -685,7 +708,7 @@ namespace MWMechanics
 
             if (item.getCellRef().getEnchantmentCharge() < castCost)
             {
-                if (mCaster == MWBase::Environment::get().getWorld()->getPlayerPtr())
+                if (mCaster == getPlayer())
                     MWBase::Environment::get().getWindowManager()->messageBox("#{sMagicInsufficientCharge}");
 
                 // Failure sound
@@ -709,14 +732,14 @@ namespace MWMechanics
 
         if (enchantment->mData.mType == ESM::Enchantment::WhenUsed)
         {
-            if (mCaster == MWBase::Environment::get().getWorld()->getPlayerPtr())
+            if (mCaster == getPlayer())
                 mCaster.getClass().skillUsageSucceeded (mCaster, ESM::Skill::Enchant, 1);
         }
         if (enchantment->mData.mType == ESM::Enchantment::CastOnce)
             item.getContainerStore()->remove(item, 1, mCaster);
         else if (enchantment->mData.mType != ESM::Enchantment::WhenStrikes)
         {
-            if (mCaster == MWBase::Environment::get().getWorld()->getPlayerPtr())
+            if (mCaster == getPlayer())
             {
                 mCaster.getClass().skillUsageSucceeded (mCaster, ESM::Skill::Enchant, 3);
             }
@@ -729,15 +752,20 @@ namespace MWMechanics
             inflict(mTarget, mCaster, enchantment->mEffects, ESM::RT_Touch);
         }
 
-        std::string projectileModel;
-        std::string sound;
-        float speed = 0;
-        getProjectileInfo(enchantment->mEffects, projectileModel, sound, speed);
-        if (!projectileModel.empty())
-            MWBase::Environment::get().getWorld()->launchMagicBolt(projectileModel, sound, mId, speed,
-                                                               false, enchantment->mEffects, mCaster, mSourceName,
-                                                                   // Not needed, enchantments can only be cast by actors
-                                                                   osg::Vec3f(1,0,0));
+        if (launchProjectile)
+        {
+            std::string projectileModel;
+            std::string sound;
+            float speed = 0;
+            getProjectileInfo(enchantment->mEffects, projectileModel, sound, speed);
+            if (!projectileModel.empty())
+                MWBase::Environment::get().getWorld()->launchMagicBolt(projectileModel, sound, mId, speed,
+                                                                   false, enchantment->mEffects, mCaster, mSourceName,
+                                                                       // Not needed, enchantments can only be cast by actors
+                                                                       osg::Vec3f(1,0,0));
+        }
+        else if (!mTarget.isEmpty())
+            inflict(mTarget, mCaster, enchantment->mEffects, ESM::RT_Target);
 
         return true;
     }
@@ -783,7 +811,7 @@ namespace MWMechanics
             float successChance = getSpellSuccessChance(spell, mCaster);
             if (Misc::Rng::roll0to99() >= successChance)
             {
-                if (mCaster == MWBase::Environment::get().getWorld()->getPlayerPtr())
+                if (mCaster == getPlayer())
                     MWBase::Environment::get().getWindowManager()->messageBox("#{sMagicSkillFail}");
                 fail = true;
             }
@@ -799,9 +827,13 @@ namespace MWMechanics
                 sndMgr->playSound3D(mCaster, "Spell Failure " + schools[school], 1.0f, 1.0f);
                 return false;
             }
+
+            // A power can be used once per 24h
+            if (spell->mData.mType == ESM::Spell::ST_Power)
+                stats.getSpells().usePower(spell);
         }
 
-        if (mCaster == MWBase::Environment::get().getWorld()->getPlayerPtr() && spellIncreasesSkill(spell))
+        if (mCaster == getPlayer() && spellIncreasesSkill(spell))
             mCaster.getClass().skillUsageSucceeded(mCaster,
                 spellSchoolToSkill(school), 0);
 
@@ -926,7 +958,8 @@ namespace MWMechanics
             MWWorld::InventoryStore& inv = ptr.getClass().getInventoryStore(ptr);
             MWWorld::ContainerStoreIterator item =
                     inv.getSlot(slot);
-            if (item != inv.end())
+
+            if (item != inv.end() && (item.getType() == MWWorld::ContainerStore::Type_Armor || item.getType() == MWWorld::ContainerStore::Type_Weapon))
             {
                 if (!item->getClass().hasItemHealth(*item))
                     return false;
@@ -945,7 +978,7 @@ namespace MWMechanics
                 if (charge == 0)
                 {
                     // Will unequip the broken item and try to find a replacement
-                    if (ptr != MWBase::Environment::get().getWorld()->getPlayerPtr())
+                    if (ptr != getPlayer())
                         inv.autoEquip(ptr);
                     else
                         inv.unequipItem(*item, ptr);
@@ -1080,7 +1113,7 @@ namespace MWMechanics
 
         }
 
-        if (receivedMagicDamage && actor == MWBase::Environment::get().getWorld()->getPlayerPtr())
+        if (receivedMagicDamage && actor == getPlayer())
             MWBase::Environment::get().getWindowManager()->activateHitOverlay(false);
     }
 

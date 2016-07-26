@@ -1,24 +1,24 @@
 #include "combat.hpp"
 
-#include <osg/PositionAttitudeTransform>
-
 #include <components/misc/rng.hpp>
+
+#include <components/sceneutil/positionattitudetransform.hpp>
 
 #include "../mwbase/environment.hpp"
 #include "../mwbase/world.hpp"
 #include "../mwbase/mechanicsmanager.hpp"
 #include "../mwbase/soundmanager.hpp"
-
-#include "../mwmechanics/npcstats.hpp"
-#include "../mwmechanics/movement.hpp"
-#include "../mwmechanics/spellcasting.hpp"
-#include "../mwmechanics/difficultyscaling.hpp"
+#include "../mwbase/windowmanager.hpp"
 
 #include "../mwworld/class.hpp"
 #include "../mwworld/inventorystore.hpp"
 #include "../mwworld/esmstore.hpp"
 
-#include "../mwbase/windowmanager.hpp"
+#include "npcstats.hpp"
+#include "movement.hpp"
+#include "spellcasting.hpp"
+#include "difficultyscaling.hpp"
+#include "actorutil.hpp"
 
 namespace
 {
@@ -28,28 +28,28 @@ float signedAngleRadians (const osg::Vec3f& v1, const osg::Vec3f& v2, const osg:
     return std::atan2((normal * (v1 ^ v2)), (v1 * v2));
 }
 
-bool applyEnchantment (const MWWorld::Ptr& attacker, const MWWorld::Ptr& victim, const MWWorld::Ptr& object, const osg::Vec3f& hitPosition)
-{
-    std::string enchantmentName = !object.isEmpty() ? object.getClass().getEnchantment(object) : "";
-    if (!enchantmentName.empty())
-    {
-        const ESM::Enchantment* enchantment = MWBase::Environment::get().getWorld()->getStore().get<ESM::Enchantment>().find(
-                    enchantmentName);
-        if (enchantment->mData.mType == ESM::Enchantment::WhenStrikes)
-        {
-            MWMechanics::CastSpell cast(attacker, victim);
-            cast.mHitPosition = hitPosition;
-            cast.cast(object);
-            return true;
-        }
-    }
-    return false;
-}
-
 }
 
 namespace MWMechanics
 {
+
+    bool applyOnStrikeEnchantment (const MWWorld::Ptr& attacker, const MWWorld::Ptr& victim, const MWWorld::Ptr& object, const osg::Vec3f& hitPosition)
+    {
+        std::string enchantmentName = !object.isEmpty() ? object.getClass().getEnchantment(object) : "";
+        if (!enchantmentName.empty())
+        {
+            const ESM::Enchantment* enchantment = MWBase::Environment::get().getWorld()->getStore().get<ESM::Enchantment>().find(
+                        enchantmentName);
+            if (enchantment->mData.mType == ESM::Enchantment::WhenStrikes)
+            {
+                MWMechanics::CastSpell cast(attacker, victim);
+                cast.mHitPosition = hitPosition;
+                cast.cast(object, false);
+                return true;
+            }
+        }
+        return false;
+    }
 
     bool blockMeleeAttack(const MWWorld::Ptr &attacker, const MWWorld::Ptr &blocker, const MWWorld::Ptr &weapon, float damage, float attackStrength)
     {
@@ -60,7 +60,7 @@ namespace MWMechanics
 
         if (blockerStats.getKnockedDown() // Used for both knockout or knockdown
                 || blockerStats.getHitRecovery()
-                || blockerStats.getMagicEffects().get(ESM::MagicEffect::Paralyze).getMagnitude() > 0)
+                || blockerStats.isParalyzed())
             return false;
 
         if (!MWBase::Environment::get().getMechanicsManager()->isReadyToBlock(blocker))
@@ -137,7 +137,7 @@ namespace MWMechanics
 
             blockerStats.setBlock(true);
 
-            if (blocker == MWBase::Environment::get().getWorld()->getPlayerPtr())
+            if (blocker == getPlayer())
                 blocker.getClass().skillUsageSucceeded(blocker, ESM::Skill::Block, 0);
 
             return true;
@@ -147,9 +147,9 @@ namespace MWMechanics
 
     void resistNormalWeapon(const MWWorld::Ptr &actor, const MWWorld::Ptr& attacker, const MWWorld::Ptr &weapon, float &damage)
     {
-        MWMechanics::CreatureStats& stats = actor.getClass().getCreatureStats(actor);
-        float resistance = std::min(100.f, stats.getMagicEffects().get(ESM::MagicEffect::ResistNormalWeapons).getMagnitude()
-                - stats.getMagicEffects().get(ESM::MagicEffect::WeaknessToNormalWeapons).getMagnitude());
+        const MWMechanics::MagicEffects& effects = actor.getClass().getCreatureStats(actor).getMagicEffects();
+        float resistance = std::min(100.f, effects.get(ESM::MagicEffect::ResistNormalWeapons).getMagnitude()
+                - effects.get(ESM::MagicEffect::WeaknessToNormalWeapons).getMagnitude());
 
         float multiplier = 1.f - resistance / 100.f;
 
@@ -161,7 +161,7 @@ namespace MWMechanics
                 && actor.getClass().isNpc() && actor.getClass().getNpcStats(actor).isWerewolf())
             damage *= MWBase::Environment::get().getWorld()->getStore().get<ESM::GameSetting>().find("fWereWolfSilverWeaponDamageMult")->getFloat();
 
-        if (damage == 0 && attacker == MWBase::Environment::get().getWorld()->getPlayerPtr())
+        if (damage == 0 && attacker == getPlayer())
             MWBase::Environment::get().getWindowManager()->messageBox("#{sMagicTargetResistsWeapons}");
     }
 
@@ -178,7 +178,7 @@ namespace MWMechanics
             return;
         }
 
-        if(attacker == MWBase::Environment::get().getWorld()->getPlayerPtr())
+        if(attacker == getPlayer())
             MWBase::Environment::get().getWindowManager()->setEnemy(victim);
 
         int weapskill = ESM::Skill::Marksman;
@@ -207,22 +207,22 @@ namespace MWMechanics
         adjustWeaponDamage(damage, weapon, attacker);
         reduceWeaponCondition(damage, true, weapon, attacker);
 
-        if(attacker == MWBase::Environment::get().getWorld()->getPlayerPtr())
+        if(attacker == getPlayer())
             attacker.getClass().skillUsageSucceeded(attacker, weapskill, 0);
 
         if (victim.getClass().getCreatureStats(victim).getKnockedDown())
             damage *= gmst.find("fCombatKODamageMult")->getFloat();
 
         // Apply "On hit" effect of the weapon
-        bool appliedEnchantment = applyEnchantment(attacker, victim, weapon, hitPosition);
+        bool appliedEnchantment = applyOnStrikeEnchantment(attacker, victim, weapon, hitPosition);
         if (weapon != projectile)
-            appliedEnchantment = applyEnchantment(attacker, victim, projectile, hitPosition);
+            appliedEnchantment = applyOnStrikeEnchantment(attacker, victim, projectile, hitPosition);
 
         if (damage > 0)
             MWBase::Environment::get().getWorld()->spawnBloodEffect(victim, hitPosition);
 
         // Non-enchanted arrows shot at enemies have a chance to turn up in their inventory
-        if (victim != MWBase::Environment::get().getWorld()->getPlayerPtr()
+        if (victim != getPlayer()
                 && !appliedEnchantment)
         {
             float fProjectileThrownStoreChance = gmst.find("fProjectileThrownStoreChance")->getFloat();
@@ -242,15 +242,15 @@ namespace MWMechanics
         const MWWorld::Store<ESM::GameSetting> &gmst = world->getStore().get<ESM::GameSetting>();
 
         float defenseTerm = 0;
-        if (victim.getClass().getCreatureStats(victim).getFatigue().getCurrent() >= 0)
+        MWMechanics::CreatureStats& victimStats = victim.getClass().getCreatureStats(victim);
+        if (victimStats.getFatigue().getCurrent() >= 0)
         {
-            MWMechanics::CreatureStats& victimStats = victim.getClass().getCreatureStats(victim);
             // Maybe we should keep an aware state for actors updated every so often instead of testing every time
             bool unaware = (!victimStats.getAiSequence().isInCombat())
-                    && (attacker == MWBase::Environment::get().getWorld()->getPlayerPtr())
+                    && (attacker == getPlayer())
                     && (!MWBase::Environment::get().getMechanicsManager()->awarenessCheck(attacker, victim));
             if (!(victimStats.getKnockedDown() ||
-                    victimStats.getMagicEffects().get(ESM::MagicEffect::Paralyze).getMagnitude() > 0
+                    victimStats.isParalyzed()
                     || unaware ))
             {
                 defenseTerm = victimStats.getEvasion();
@@ -375,7 +375,7 @@ namespace MWMechanics
         damage *= minstrike + ((maxstrike-minstrike)*attackStrength);
 
         MWMechanics::CreatureStats& otherstats = victim.getClass().getCreatureStats(victim);
-        healthdmg = (otherstats.getMagicEffects().get(ESM::MagicEffect::Paralyze).getMagnitude() > 0)
+        healthdmg = otherstats.isParalyzed()
                 || otherstats.getKnockedDown();
         bool isWerewolf = (attacker.getClass().isNpc() && attacker.getClass().getNpcStats(attacker).isWerewolf());
         if(isWerewolf)

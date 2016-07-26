@@ -1,8 +1,9 @@
-
 #include "cellid.hpp"
 
 #include "esmreader.hpp"
 #include "esmwriter.hpp"
+
+const std::string ESM::CellId::sDefaultWorldspace = "sys::default";
 
 void ESM::CellId::load (ESMReader &esm)
 {

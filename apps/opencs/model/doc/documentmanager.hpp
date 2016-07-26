@@ -10,6 +10,7 @@
 #include <QThread>
 
 #include <components/to_utf8/to_utf8.hpp>
+#include <components/fallback/fallback.hpp>
 
 #include "../world/resourcesmanager.hpp"
 
@@ -56,7 +57,18 @@ namespace CSMDoc
             ///< \param new_ Do not load the last content file in \a files and instead create in an
             /// appropriate way.
 
+            /// Create a new document. The ownership of the created document is transferred to
+            /// the calling function. The DocumentManager does not manage it. Loading has not
+            /// taken place at the point when the document is returned.
+            ///
+            /// \param new_ Do not load the last content file in \a files and instead create in an
+            /// appropriate way.
+            Document *makeDocument (const std::vector< boost::filesystem::path >& files,
+                const boost::filesystem::path& savePath, bool new_);
+
             void setResourceDir (const boost::filesystem::path& parResDir);
+
+            void setFallbackMap (const std::map<std::string, std::string>& fallbackMap);
 
             void setEncoding (ToUTF8::FromType encoding);
 
@@ -69,6 +81,7 @@ namespace CSMDoc
         private:
 
             boost::filesystem::path mResDir;
+            Fallback::Map mFallbackMap;
 
         private slots:
 
@@ -84,9 +97,15 @@ namespace CSMDoc
             void removeDocument (CSMDoc::Document *document);
             ///< Emits the lastDocumentDeleted signal, if applicable.
 
+            /// Hand over document to *this. The ownership is transferred. The DocumentManager
+            /// will initiate the load procedure, if necessary
+            void insertDocument (CSMDoc::Document *document);
+
         signals:
 
             void documentAdded (CSMDoc::Document *document);
+
+            void documentAboutToBeRemoved (CSMDoc::Document *document);
 
             void loadRequest (CSMDoc::Document *document);
 

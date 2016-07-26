@@ -9,13 +9,32 @@
 
 #include "../mwbase/environment.hpp"
 #include "../mwbase/scriptmanager.hpp"
+#include "../mwbase/world.hpp"
+
+#include "../mwworld/esmstore.hpp"
 
 #include <iostream>
 
 namespace MWScript
 {
-    void Locals::configure (const ESM::Script& script)
+    void Locals::ensure (const std::string& scriptName)
     {
+        if (!mInitialised)
+        {
+            const ESM::Script *script = MWBase::Environment::get().getWorld()->getStore().
+                get<ESM::Script>().find (scriptName);
+
+            configure (*script);
+        }
+    }
+
+    Locals::Locals() : mInitialised (false) {}
+
+    bool Locals::configure (const ESM::Script& script)
+    {
+        if (mInitialised)
+            return false;
+
         const Compiler::Locals& locals =
             MWBase::Environment::get().getScriptManager()->getLocals (script.mId);
 
@@ -25,6 +44,9 @@ namespace MWScript
         mLongs.resize (locals.get ('l').size(), 0);
         mFloats.clear();
         mFloats.resize (locals.get ('f').size(), 0);
+
+        mInitialised = true;
+        return true;
     }
 
     bool Locals::isEmpty() const
@@ -36,6 +58,8 @@ namespace MWScript
     {
         try
         {
+            ensure (script);
+
             const Compiler::Locals& locals =
                 MWBase::Environment::get().getScriptManager()->getLocals(script);
             int index = locals.getIndex(var);
@@ -49,6 +73,8 @@ namespace MWScript
 
     int Locals::getIntVar(const std::string &script, const std::string &var)
     {
+        ensure (script);
+
         const Compiler::Locals& locals = MWBase::Environment::get().getScriptManager()->getLocals(script);
         int index = locals.getIndex(var);
         char type = locals.getType(var);
@@ -71,8 +97,36 @@ namespace MWScript
         return 0;
     }
 
+    float Locals::getFloatVar(const std::string &script, const std::string &var)
+    {
+        ensure (script);
+
+        const Compiler::Locals& locals = MWBase::Environment::get().getScriptManager()->getLocals(script);
+        int index = locals.getIndex(var);
+        char type = locals.getType(var);
+        if(index != -1)
+        {
+            switch(type)
+            {
+                case 's':
+                    return mShorts.at (index);
+
+                case 'l':
+                    return mLongs.at (index);
+
+                case 'f':
+                    return mFloats.at(index);
+                default:
+                    return 0;
+            }
+        }
+        return 0;
+    }
+
     bool Locals::setVarByInt(const std::string& script, const std::string& var, int val)
     {
+        ensure (script);
+
         const Compiler::Locals& locals = MWBase::Environment::get().getScriptManager()->getLocals(script);
         int index = locals.getIndex(var);
         char type = locals.getType(var);
@@ -94,8 +148,11 @@ namespace MWScript
         return false;
     }
 
-    void Locals::write (ESM::Locals& locals, const std::string& script) const
+    bool Locals::write (ESM::Locals& locals, const std::string& script) const
     {
+        if (!mInitialised)
+            return false;
+
         try
         {
             const Compiler::Locals& declarations =
@@ -132,10 +189,14 @@ namespace MWScript
         catch (const Compiler::SourceException&)
         {
         }
+
+        return true;
     }
 
     void Locals::read (const ESM::Locals& locals, const std::string& script)
     {
+        ensure (script);
+
         try
         {
             const Compiler::Locals& declarations =

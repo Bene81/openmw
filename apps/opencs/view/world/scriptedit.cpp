@@ -12,8 +12,7 @@
 
 #include "../../model/world/universalid.hpp"
 #include "../../model/world/tablemimedata.hpp"
-#include "../../model/settings/usersettings.hpp"
-
+#include "../../model/prefs/state.hpp"
 
 CSVWorld::ScriptEdit::ChangeLock::ChangeLock (ScriptEdit& edit) : mEdit (edit)
 {
@@ -39,21 +38,22 @@ bool CSVWorld::ScriptEdit::event (QEvent *event)
     return QPlainTextEdit::event (event);
 }
 
-CSVWorld::ScriptEdit::ScriptEdit (const CSMDoc::Document& document, ScriptHighlighter::Mode mode,
-    QWidget* parent)
-    : QPlainTextEdit (parent),
-    mChangeLocked (0),
+CSVWorld::ScriptEdit::ScriptEdit(
+    const CSMDoc::Document& document,
+    ScriptHighlighter::Mode mode,
+    QWidget* parent
+) : QPlainTextEdit(parent),
+    mChangeLocked(0),
     mShowLineNum(false),
     mLineNumberArea(0),
     mDefaultFont(font()),
     mMonoFont(QFont("Monospace")),
-    mDocument (document),
+    mTabCharCount(4),
+    mDocument(document),
     mWhiteListQoutes("^[a-z|_]{1}[a-z|0-9|_]{0,}$", Qt::CaseInsensitive)
-
 {
-//    setAcceptRichText (false);
-    setLineWrapMode (QPlainTextEdit::NoWrap);
-    setTabStopWidth (4);
+    wrapLines(false);
+    setTabWidth();
     setUndoRedoEnabled (false); // we use OpenCS-wide undo/redo instead
 
     mAllowedTypes <<CSMWorld::UniversalId::Type_Journal
@@ -92,31 +92,24 @@ CSVWorld::ScriptEdit::ScriptEdit (const CSMDoc::Document& document, ScriptHighli
 
     connect (&mUpdateTimer, SIGNAL (timeout()), this, SLOT (updateHighlighting()));
 
-    CSMSettings::UserSettings &userSettings = CSMSettings::UserSettings::instance();
-    connect (&userSettings, SIGNAL (userSettingUpdated(const QString &, const QStringList &)),
-             this, SLOT (updateUserSetting (const QString &, const QStringList &)));
+    connect (&CSMPrefs::State::get(), SIGNAL (settingChanged (const CSMPrefs::Setting *)),
+        this, SLOT (settingChanged (const CSMPrefs::Setting *)));
+    {
+        ChangeLock lock (*this);
+        CSMPrefs::get()["Scripts"].update();
+    }
 
     mUpdateTimer.setSingleShot (true);
 
     // TODO: provide a font selector dialogue
     mMonoFont.setStyleHint(QFont::TypeWriter);
 
-    if (userSettings.setting("script-editor/mono-font", "true") == "true")
-        setFont(mMonoFont);
-
     mLineNumberArea = new LineNumberArea(this);
     updateLineNumberAreaWidth(0);
 
     connect(this, SIGNAL(blockCountChanged(int)), this, SLOT(updateLineNumberAreaWidth(int)));
     connect(this, SIGNAL(updateRequest(QRect,int)), this, SLOT(updateLineNumberArea(QRect,int)));
-
-    showLineNum(userSettings.settingValue("script-editor/show-linenum") == "true");
-}
-
-void CSVWorld::ScriptEdit::updateUserSetting (const QString &name, const QStringList &list)
-{
-    if (mHighlighter->updateUserSetting (name, list))
-        updateHighlighting();
+    updateHighlighting();
 }
 
 void CSVWorld::ScriptEdit::showLineNum(bool show)
@@ -126,14 +119,6 @@ void CSVWorld::ScriptEdit::showLineNum(bool show)
         mShowLineNum = show;
         updateLineNumberAreaWidth(0);
     }
-}
-
-void CSVWorld::ScriptEdit::setMonoFont(bool show)
-{
-    if(show)
-        setFont(mMonoFont);
-    else
-        setFont(mDefaultFont);
 }
 
 bool CSVWorld::ScriptEdit::isChangeLocked() const
@@ -200,6 +185,51 @@ bool CSVWorld::ScriptEdit::stringNeedsQuote (const std::string& id) const
     const QString string(QString::fromUtf8(id.c_str())); //<regex> is only for c++11, so let's use qregexp for now.
     //I'm not quite sure when do we need to put quotes. To be safe we will use quotes for anything other than…
     return !(string.contains(mWhiteListQoutes));
+}
+
+void CSVWorld::ScriptEdit::setTabWidth()
+{
+    // Set tab width to specified number of characters using current font.
+    setTabStopWidth(mTabCharCount * fontMetrics().width(' '));
+}
+
+void CSVWorld::ScriptEdit::wrapLines(bool wrap)
+{
+    if (wrap)
+    {
+        setLineWrapMode(QPlainTextEdit::WidgetWidth);
+    }
+    else
+    {
+        setLineWrapMode(QPlainTextEdit::NoWrap);
+    }
+}
+
+void CSVWorld::ScriptEdit::settingChanged(const CSMPrefs::Setting *setting)
+{
+    // Determine which setting was changed.
+    if (mHighlighter->settingChanged(setting))
+    {
+        updateHighlighting();
+    }
+    else if (*setting == "Scripts/mono-font")
+    {
+        setFont(setting->isTrue() ? mMonoFont : mDefaultFont);
+        setTabWidth();
+    }
+    else if (*setting == "Scripts/show-linenum")
+    {
+        showLineNum(setting->isTrue());
+    }
+    else if (*setting == "Scripts/wrap-lines")
+    {
+        wrapLines(setting->isTrue());
+    }
+    else if (*setting == "Scripts/tab-width")
+    {
+        mTabCharCount = setting->toInt();
+        setTabWidth();
+    }
 }
 
 void CSVWorld::ScriptEdit::idListChanged()

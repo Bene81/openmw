@@ -36,6 +36,7 @@ namespace MWGui
         , mLastWallpaperChangeTime(0.0)
         , mLastRenderTime(0.0)
         , mLoadingOnTime(0.0)
+        , mImportantLabel(false)
         , mProgress(0)
     {
         mMainWidget->setSize(MyGUI::RenderManager::getInstance().getViewSize());
@@ -82,8 +83,10 @@ namespace MWGui
             std::cerr << "No splash screens found!" << std::endl;
     }
 
-    void LoadingScreen::setLabel(const std::string &label)
+    void LoadingScreen::setLabel(const std::string &label, bool important)
     {
+        mImportantLabel = important;
+
         mLoadingText->setCaptionWithReplacing(label);
         int padding = mLoadingBox->getWidth() - mLoadingText->getWidth();
         MyGUI::IntSize size(mLoadingText->getTextSize().width+padding, mLoadingBox->getHeight());
@@ -161,7 +164,7 @@ namespace MWGui
             mBackgroundImage->setBackgroundImage("");
 
             mBackgroundImage->setRenderItemTexture(mGuiTexture.get());
-            mBackgroundImage->getSubWidgetMain()->_setUVSet(MyGUI::FloatRect(0.f, 1.f, 1.f, 0.f));
+            mBackgroundImage->getSubWidgetMain()->_setUVSet(MyGUI::FloatRect(0.f, 0.f, 1.f, 1.f));
         }
 
         setVisible(true);
@@ -176,6 +179,19 @@ namespace MWGui
 
     void LoadingScreen::loadingOff()
     {
+        if (mLastRenderTime < mLoadingOnTime)
+        {
+            // the loading was so fast that we didn't show loading screen at all
+            // we may still want to show the label if the caller requested it
+            if (mImportantLabel)
+            {
+                MWBase::Environment::get().getWindowManager()->messageBox(mLoadingText->getCaption());
+                mImportantLabel = false;
+            }
+        }
+        else
+            mImportantLabel = false; // label was already shown on loading screen
+
         //std::cout << "loading took " << mTimer.time_m() - mLoadingOnTime << std::endl;
         setVisible(false);
 
@@ -209,6 +225,7 @@ namespace MWGui
         // skip expensive update if there isn't enough visible progress
         if (value - mProgress < mProgressBar->getScrollRange()/200.f)
             return;
+        value = std::min(value, mProgressBar->getScrollRange()-1);
         mProgress = value;
         mProgressBar->setScrollPosition(0);
         mProgressBar->setTrackSize(static_cast<int>(value / (float)(mProgressBar->getScrollRange()) * mProgressBar->getLineSize()));
@@ -219,56 +236,76 @@ namespace MWGui
     {
         mProgressBar->setScrollPosition(0);
         size_t value = mProgress + increase;
+        value = std::min(value, mProgressBar->getScrollRange()-1);
         mProgress = value;
         mProgressBar->setTrackSize(static_cast<int>(value / (float)(mProgressBar->getScrollRange()) * mProgressBar->getLineSize()));
         draw();
     }
 
-    void LoadingScreen::indicateProgress()
+    bool LoadingScreen::needToDrawLoadingScreen()
     {
-        float time = (static_cast<int>(mTimer.time_m()) % 2001) / 1000.f;
-        if (time > 1)
-            time = (time-2)*-1;
+        if ( mTimer.time_m() <= mLastRenderTime + (1.0/mTargetFrameRate) * 1000.0)
+            return false;
 
-        mProgressBar->setTrackSize(50);
-        mProgressBar->setScrollPosition(static_cast<size_t>(time * (mProgressBar->getScrollRange() - 1)));
-        draw();
+        // the minimal delay before a loading screen shows
+        const float initialDelay = 0.05;
+
+        bool alreadyShown = (mLastRenderTime > mLoadingOnTime);
+        float diff = (mTimer.time_m() - mLoadingOnTime);
+
+        if (!alreadyShown)
+        {
+            // bump the delay by the current progress - i.e. if during the initial delay the loading
+            // has almost finished, no point showing the loading screen now
+            diff -= mProgress / static_cast<float>(mProgressBar->getScrollRange()) * 100.f;
+        }
+
+        bool showWallpaper = (MWBase::Environment::get().getStateManager()->getState()
+                == MWBase::StateManager::State_NoGame);
+        if (!showWallpaper && diff < initialDelay*1000)
+            return false;
+        return true;
     }
 
     void LoadingScreen::draw()
     {
-        if (mTimer.time_m() > mLastRenderTime + (1.0/mTargetFrameRate) * 1000.0)
+        if (!needToDrawLoadingScreen())
+            return;
+
+        bool showWallpaper = (MWBase::Environment::get().getStateManager()->getState()
+                == MWBase::StateManager::State_NoGame);
+        if (showWallpaper && mTimer.time_m() > mLastWallpaperChangeTime + 5000*1)
         {
-            bool showWallpaper = (MWBase::Environment::get().getStateManager()->getState()
-                    == MWBase::StateManager::State_NoGame);
-
-            if (showWallpaper && mTimer.time_m() > mLastWallpaperChangeTime + 5000*1)
-            {
-                mLastWallpaperChangeTime = mTimer.time_m();
-                changeWallpaper();
-            }
-
-            // Turn off rendering except the GUI
-            int oldUpdateMask = mViewer->getUpdateVisitor()->getTraversalMask();
-            int oldCullMask = mViewer->getCamera()->getCullMask();
-            mViewer->getUpdateVisitor()->setTraversalMask(MWRender::Mask_GUI);
-            mViewer->getCamera()->setCullMask(MWRender::Mask_GUI);
-
-            MWBase::Environment::get().getInputManager()->update(0, true, true);
-
-            //osg::Timer timer;
-            mViewer->frame(mViewer->getFrameStamp()->getSimulationTime());
-            //std::cout << "frame took " << timer.time_m() << std::endl;
-
-            //if (mViewer->getIncrementalCompileOperation())
-                //std::cout << "num to compile " << mViewer->getIncrementalCompileOperation()->getToCompile().size() << std::endl;
-
-            // resume 3d rendering
-            mViewer->getUpdateVisitor()->setTraversalMask(oldUpdateMask);
-            mViewer->getCamera()->setCullMask(oldCullMask);
-
-            mLastRenderTime = mTimer.time_m();
+            mLastWallpaperChangeTime = mTimer.time_m();
+            changeWallpaper();
         }
+
+        // Turn off rendering except the GUI
+        int oldUpdateMask = mViewer->getUpdateVisitor()->getTraversalMask();
+        int oldCullMask = mViewer->getCamera()->getCullMask();
+        mViewer->getUpdateVisitor()->setTraversalMask(MWRender::Mask_GUI);
+        mViewer->getCamera()->setCullMask(MWRender::Mask_GUI);
+
+        MWBase::Environment::get().getInputManager()->update(0, true, true);
+
+        //osg::Timer timer;
+        // at the time this function is called we are in the middle of a frame,
+        // so out of order calls are necessary to get a correct frameNumber for the next frame.
+        // refer to the advance() and frame() order in Engine::go()
+        mViewer->eventTraversal();
+        mViewer->updateTraversal();
+        mViewer->renderingTraversals();
+        mViewer->advance(mViewer->getFrameStamp()->getSimulationTime());
+        //std::cout << "frame took " << timer.time_m() << std::endl;
+
+        //if (mViewer->getIncrementalCompileOperation())
+            //std::cout << "num to compile " << mViewer->getIncrementalCompileOperation()->getToCompile().size() << std::endl;
+
+        // resume 3d rendering
+        mViewer->getUpdateVisitor()->setTraversalMask(oldUpdateMask);
+        mViewer->getCamera()->setCullMask(oldCullMask);
+
+        mLastRenderTime = mTimer.time_m();
     }
 
 }

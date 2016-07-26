@@ -13,14 +13,22 @@ Programmers
     Marc Zinnschlag (Zini) - Lead Programmer/Project Manager
 
     Adam Hogan (aurix)
+    Aesylwinn
+    aegis
     Aleksandar Jovanov
     Alex Haddad (rainChu)
     Alex McKibben (WeirdSexy)
+    alexanderkjall
     Alexander Nadeau (wareya)
     Alexander Olofsson (Ace)
+    Allofich
+    AnyOldName3
+    Austin Salgat (Salgat)
     Artem Kotsynyak (greye)
+    artemutin
     Arthur Moore (EmperorArthur)
     athile
+    Ben Shealy (bentsherman)
     Bret Curtis (psi29a)
     Britt Mathis (galdor557)
     cc9cii
@@ -29,6 +37,7 @@ Programmers
     Cory F. Cohen (cfcohen)
     Cris Mihalache (Mirceam)
     darkf
+    Dieho
     Dmitry Shkurskiy (endorph)
     Douglas Diniz (Dgdiniz)
     Douglas Mencken (dougmencken)
@@ -45,6 +54,7 @@ Programmers
     Gašper Sedej
     gugus/gus
     Hallfaer Tuilinn
+    hristoast
     Internecine
     Jacob Essex (Yacoby)
     Jannik Heller (scrawl)
@@ -53,6 +63,7 @@ Programmers
     Jeffrey Haines (Jyby)
     Jengerer
     Jiří Kuneš (kunesj)
+    Joe Wilkerson (neuralroberts)
     Joel Graff (graffy)
     John Blomberg (fstp)
     Jordan Ayers
@@ -72,11 +83,13 @@ Programmers
     Marco Melletti (mellotanica)
     Marco Schulze
     Mateusz Kołaczek (PL_kolek)
+    Mateusz Malisz (malice)
     megaton
     Michael Hogan (Xethik)
     Michael Mc Donnell
     Michael Papageorgiou (werdanith)
     Michał Bień (Glorf)
+    Michał Moroz (dragonee)
     Miroslav Puda (pakanek)
     MiroslavR
     naclander
@@ -86,16 +99,19 @@ Programmers
     Nikolay Kasyanov (corristo)
     nobrakal
     Nolan Poe (nopoe)
+    Paul Cercueil (pcercuei)
     Paul McElroy (Greendogo)
+    Pi03k
     Pieter van der Kloet (pvdk)
     pkubik
     Radu-Marius Popovici (rpopovici)
     rdimesio
     riothamus
+    Rob Cutmore (rcutmore)
     Robert MacGregor (Ragora)
     Rohit Nirmal
     Roman Melnik (Kromgart)
-    Roman Proskuryakov (humbug)
+    Roman Proskuryakov (kpp)
     Sandy Carter (bwrsandman)
     Scott Howard
     Sebastian Wick (swick)
@@ -104,7 +120,9 @@ Programmers
     smbas
     Stefan Galowicz (bogglez)
     Stanislav Bobrov (Jiub)
+    svaante
     Sylvain Thesnieres (Garvek)
+    t6
     terrorfisch
     Thomas Luppi (Digmaster)
     Tom Mason (wheybags)
@@ -112,12 +130,14 @@ Programmers
     viadanna
     Vincent Heuken
     vocollapse
+    zelurker
 
 Manual
 ------
 
     Bodillium
     Cramal
+    Alejandro Sanchez (HiPhish)
     sir_herrbatka
 
 Packagers

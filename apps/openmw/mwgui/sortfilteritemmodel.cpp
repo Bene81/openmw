@@ -71,7 +71,6 @@ namespace MWGui
     SortFilterItemModel::SortFilterItemModel(ItemModel *sourceModel)
         : mCategory(Category_All)
         , mFilter(0)
-        , mShowEquipped(true)
         , mSortByType(true)
     {
         mSourceModel = sourceModel;
@@ -90,9 +89,6 @@ namespace MWGui
     bool SortFilterItemModel::filterAccepts (const ItemStack& item)
     {
         MWWorld::Ptr base = item.mBase;
-
-        if (item.mType == ItemStack::Type_Equipped && !mShowEquipped)
-            return false;
 
         int category = 0;
         if (base.getTypeName() == typeid(ESM::Armor).name()
@@ -136,9 +132,12 @@ namespace MWGui
                 && !base.get<ESM::Book>()->mBase->mData.mIsScroll)
             return false;
 
-        if ((mFilter & Filter_OnlyUsableItems) && typeid(*base.getClass().use(base)) == typeid(MWWorld::NullAction)
-                && base.getClass().getScript(base).empty())
-            return false;
+        if ((mFilter & Filter_OnlyUsableItems) && base.getClass().getScript(base).empty())
+        {
+            boost::shared_ptr<MWWorld::Action> actionOnUse = base.getClass().use(base);
+            if (!actionOnUse || actionOnUse->isNullAction())
+                return false;
+        }
 
         return true;
     }

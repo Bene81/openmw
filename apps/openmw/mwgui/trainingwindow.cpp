@@ -13,6 +13,7 @@
 #include "../mwworld/esmstore.hpp"
 
 #include "../mwmechanics/npcstats.hpp"
+#include "../mwmechanics/actorutil.hpp"
 
 #include "tooltips.hpp"
 
@@ -68,7 +69,7 @@ namespace MWGui
     {
         mPtr = actor;
 
-        MWWorld::Ptr player = MWBase::Environment::get().getWorld()->getPlayerPtr();
+        MWWorld::Ptr player = MWMechanics::getPlayer();
         int playerGold = player.getClass().getContainerStore(player).count(MWWorld::ContainerStore::sGoldId);
 
         mPlayerGold->setCaptionWithReplacing("#{sGold}: " + MyGUI::utility::toString(playerGold));
@@ -175,9 +176,9 @@ namespace MWGui
         MWBase::Environment::get().getDialogueManager()->goodbyeSelected();
 
         // advance time
+        MWBase::Environment::get().getMechanicsManager()->rest(false);
+        MWBase::Environment::get().getMechanicsManager()->rest(false);
         MWBase::Environment::get().getWorld ()->advanceTime (2);
-        MWBase::Environment::get().getMechanicsManager()->rest(false);
-        MWBase::Environment::get().getMechanicsManager()->rest(false);
 
         mProgressBar.setVisible(true);
         mProgressBar.setProgress(0, 2);

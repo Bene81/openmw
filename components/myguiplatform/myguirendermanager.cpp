@@ -6,15 +6,15 @@
 #include <MyGUI_Timer.h>
 
 #include <osg/Drawable>
-#include <osg/Geode>
 #include <osg/BlendFunc>
 #include <osg/Texture2D>
+#include <osg/TexMat>
 
 #include <osgViewer/Viewer>
 
 #include <osgGA/GUIEventHandler>
 
-#include <components/resource/texturemanager.hpp>
+#include <components/resource/imagemanager.hpp>
 
 #include "myguitexture.hpp"
 
@@ -23,7 +23,6 @@
 
 #define MYGUI_PLATFORM_EXCEPT(dest) do { \
     MYGUI_PLATFORM_LOG(Critical, dest); \
-    MYGUI_DBG_BREAK;\
     std::ostringstream stream; \
     stream << dest << "\n"; \
     MYGUI_BASE_EXCEPT(stream.str().c_str(), "MyGUI"); \
@@ -33,7 +32,6 @@
     if ( ! (exp) ) \
     { \
         MYGUI_PLATFORM_LOG(Critical, dest); \
-        MYGUI_DBG_BREAK;\
         std::ostringstream stream; \
         stream << dest << "\n"; \
         MYGUI_BASE_EXCEPT(stream.str().c_str(), "MyGUI"); \
@@ -45,6 +43,9 @@ namespace osgMyGUI
 
 class Drawable : public osg::Drawable {
     osgMyGUI::RenderManager *mParent;
+    osg::ref_ptr<osg::StateSet> mStateSet;
+
+public:
 
     // Stage 0: update widget animations and controllers. Run during the Update traversal.
     class FrameUpdate : public osg::Drawable::UpdateCallback
@@ -101,6 +102,10 @@ class Drawable : public osg::Drawable {
     virtual void drawImplementation(osg::RenderInfo &renderInfo) const
     {
         osg::State *state = renderInfo.getState();
+
+        state->pushStateSet(mStateSet);
+        state->apply();
+
         state->disableAllVertexArrays();
         state->setClientActiveTextureUnit(0);
         glEnableClientState(GL_VERTEX_ARRAY);
@@ -113,13 +118,19 @@ class Drawable : public osg::Drawable {
         {
             const Batch& batch = *it;
             osg::VertexBufferObject *vbo = batch.mVertexBuffer;
+
+            if (batch.mStateSet)
+            {
+                state->pushStateSet(batch.mStateSet);
+                state->apply();
+            }
+
             osg::Texture2D* texture = batch.mTexture;
             if(texture)
                 state->applyTextureAttribute(0, texture);
 
-            // VBOs disabled due to crash in OSG: http://forum.openscenegraph.org/viewtopic.php?t=14909
-            osg::GLBufferObject* bufferobject = 0;//state->isVertexBufferObjectSupported() ? vbo->getOrCreateGLBufferObject(state->getContextID()) : 0;
-            if (0)//bufferobject)
+            osg::GLBufferObject* bufferobject = state->isVertexBufferObjectSupported() ? vbo->getOrCreateGLBufferObject(state->getContextID()) : 0;
+            if (bufferobject)
             {
                 state->bindVertexBufferObject(bufferobject);
 
@@ -135,11 +146,19 @@ class Drawable : public osg::Drawable {
             }
 
             glDrawArrays(GL_TRIANGLES, 0, batch.mVertexCount);
+
+            if (batch.mStateSet)
+            {
+                state->popStateSet();
+                state->apply();
+            }
         }
 
         glDisableClientState(GL_VERTEX_ARRAY);
         glDisableClientState(GL_TEXTURE_COORD_ARRAY);
         glDisableClientState(GL_COLOR_ARRAY);
+
+        state->popStateSet();
 
         state->unbindVertexBufferObject();
         state->dirtyAllVertexArrays();
@@ -161,10 +180,23 @@ public:
         osg::ref_ptr<FrameUpdate> frameUpdate = new FrameUpdate;
         frameUpdate->setRenderManager(mParent);
         setUpdateCallback(frameUpdate);
+
+        mStateSet = new osg::StateSet;
+        mStateSet->setMode(GL_LIGHTING, osg::StateAttribute::OFF);
+        mStateSet->setTextureMode(0, GL_TEXTURE_2D, osg::StateAttribute::ON);
+        mStateSet->setMode(GL_DEPTH_TEST, osg::StateAttribute::OFF);
+        mStateSet->setMode(GL_BLEND, osg::StateAttribute::ON);
+
+        // need to flip tex coords since MyGUI uses DirectX convention of top left image origin
+        osg::Matrix flipMat;
+        flipMat.preMultTranslate(osg::Vec3f(0,1,0));
+        flipMat.preMultScale(osg::Vec3f(1,-1,1));
+        mStateSet->setTextureAttribute(0, new osg::TexMat(flipMat), osg::StateAttribute::ON);
     }
     Drawable(const Drawable &copy, const osg::CopyOp &copyop=osg::CopyOp::SHALLOW_COPY)
         : osg::Drawable(copy, copyop)
         , mParent(copy.mParent)
+        , mStateSet(copy.mStateSet)
         , mWriteTo(0)
         , mReadFrom(0)
     {
@@ -179,6 +211,9 @@ public:
         osg::ref_ptr<osg::VertexBufferObject> mVertexBuffer;
         // need to hold on to this too as the mVertexBuffer does not hold a ref to its own array
         osg::ref_ptr<osg::UByteArray> mArray;
+
+        // optional
+        osg::ref_ptr<osg::StateSet> mStateSet;
 
         size_t mVertexCount;
     };
@@ -314,13 +349,14 @@ void OSGVertexBuffer::create()
 
 // ---------------------------------------------------------------------------
 
-RenderManager::RenderManager(osgViewer::Viewer *viewer, osg::Group *sceneroot, Resource::TextureManager* textureManager, float scalingFactor)
+RenderManager::RenderManager(osgViewer::Viewer *viewer, osg::Group *sceneroot, Resource::ImageManager* imageManager, float scalingFactor)
   : mViewer(viewer)
   , mSceneRoot(sceneroot)
-  , mTextureManager(textureManager)
+  , mImageManager(imageManager)
   , mUpdate(false)
   , mIsInitialise(false)
   , mInvScalingFactor(1.f)
+  , mInjectState(NULL)
 {
     if (scalingFactor != 0.f)
         mInvScalingFactor = 1.f / scalingFactor;
@@ -354,9 +390,6 @@ void RenderManager::initialise()
 
     mDrawable = new Drawable(this);
 
-    osg::ref_ptr<osg::Geode> geode = new osg::Geode;
-    geode->addDrawable(mDrawable.get());
-
     osg::ref_ptr<osg::Camera> camera = new osg::Camera();
     camera->setReferenceFrame(osg::Transform::ABSOLUTE_RF);
     camera->setProjectionResizePolicy(osg::Camera::FIXED);
@@ -364,14 +397,8 @@ void RenderManager::initialise()
     camera->setViewMatrix(osg::Matrix::identity());
     camera->setRenderOrder(osg::Camera::POST_RENDER);
     camera->setClearMask(GL_NONE);
-    osg::StateSet *state = new osg::StateSet;
-    state->setTextureMode(0, GL_TEXTURE_2D, osg::StateAttribute::ON);
-    state->setMode(GL_DEPTH_TEST, osg::StateAttribute::OFF);
-    state->setMode(GL_BLEND, osg::StateAttribute::ON);
-    state->setAttribute(new osg::BlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA));
-    geode->setStateSet(state);
-    geode->setCullingActive(false);
-    camera->addChild(geode.get());
+    mDrawable->setCullingActive(false);
+    camera->addChild(mDrawable.get());
 
     mGuiRoot = camera;
     mSceneRoot->addChild(mGuiRoot.get());
@@ -418,8 +445,15 @@ void RenderManager::doRender(MyGUI::IVertexBuffer *buffer, MyGUI::ITexture *text
         if (batch.mTexture->getDataVariance() == osg::Object::DYNAMIC)
             mDrawable->setDataVariance(osg::Object::DYNAMIC); // only for this frame, reset in begin()
     }
+    if (mInjectState)
+        batch.mStateSet = mInjectState;
 
     mDrawable->addBatch(batch);
+}
+
+void RenderManager::setInjectState(osg::StateSet* stateSet)
+{
+    mInjectState = stateSet;
 }
 
 void RenderManager::end()
@@ -482,7 +516,7 @@ MyGUI::ITexture* RenderManager::createTexture(const std::string &name)
         mTextures.erase(item);
     }
 
-    OSGTexture* texture = new OSGTexture(name, mTextureManager);
+    OSGTexture* texture = new OSGTexture(name, mImageManager);
     mTextures.insert(std::make_pair(name, texture));
     return texture;
 }

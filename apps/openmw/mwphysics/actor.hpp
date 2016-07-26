@@ -13,9 +13,9 @@ class btCollisionWorld;
 class btCollisionShape;
 class btCollisionObject;
 
-namespace NifBullet
+namespace Resource
 {
-    class BulletShapeInstance;
+    class BulletShape;
 }
 
 namespace MWPhysics
@@ -31,7 +31,12 @@ namespace MWPhysics
             mPtr = updated;
         }
 
-        MWWorld::Ptr getPtr() const
+        MWWorld::Ptr getPtr()
+        {
+            return mPtr;
+        }
+
+        MWWorld::ConstPtr getPtr() const
         {
             return mPtr;
         }
@@ -43,7 +48,7 @@ namespace MWPhysics
     class Actor : public PtrHolder
     {
     public:
-        Actor(const MWWorld::Ptr& ptr, osg::ref_ptr<NifBullet::BulletShapeInstance> shape, btCollisionWorld* world);
+        Actor(const MWWorld::Ptr& ptr, osg::ref_ptr<const Resource::BulletShape> shape, btCollisionWorld* world);
         ~Actor();
 
         /**
@@ -63,12 +68,41 @@ namespace MWPhysics
 
         void updateScale();
         void updateRotation();
-        void updatePosition();
 
         /**
-         * Returns the (scaled) half extents
+         * Set mPosition and mPreviousPosition to the position in the Ptr's RefData. This should be used
+         * when an object is "instantly" moved/teleported as opposed to being moved by the physics simulation.
+         */
+        void updatePosition();
+
+        void updateCollisionObjectPosition();
+
+        /**
+         * Returns the half extents of the collision body (scaled according to collision scale)
          */
         osg::Vec3f getHalfExtents() const;
+
+        /**
+         * Returns the position of the collision body
+         * @note The collision shape's origin is in its center, so the position returned can be described as center of the actor collision box in world space.
+         */
+        osg::Vec3f getCollisionObjectPosition() const;
+
+        /**
+          * Store the current position into mPreviousPosition, then move to this position.
+          */
+        void setPosition(const osg::Vec3f& position);
+
+        osg::Vec3f getPosition() const;
+
+        osg::Vec3f getPreviousPosition() const;
+
+        /**
+         * Returns the half extents of the collision body (scaled according to rendering scale)
+         * @note The reason we need this extra method is because of an inconsistency in MW - NPC race scales aren't applied to the collision shape,
+         * most likely to make environment collision testing easier. However in some cases (swimming level) we want the actual scale.
+         */
+        osg::Vec3f getRenderingHalfExtents() const;
 
         /**
          * Sets the current amount of inertial force (incl. gravity) affecting this physic actor
@@ -118,7 +152,9 @@ namespace MWPhysics
         osg::Quat mRotation;
 
         osg::Vec3f mScale;
+        osg::Vec3f mRenderingScale;
         osg::Vec3f mPosition;
+        osg::Vec3f mPreviousPosition;
 
         osg::Vec3f mForce;
         bool mOnGround;

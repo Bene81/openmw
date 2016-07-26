@@ -3,6 +3,8 @@
 #include <osg/Transform>
 #include <osg/MatrixTransform>
 
+#include <components/misc/stringops.hpp>
+
 #include <iostream>
 
 namespace SceneUtil
@@ -23,7 +25,7 @@ public:
         if (!bone)
             return;
 
-        mCache[bone->getName()] = std::make_pair(getNodePath(), bone);
+        mCache[Misc::StringUtils::lowerCase(bone->getName())] = std::make_pair(getNodePath(), bone);
 
         traverse(node);
     }
@@ -36,6 +38,8 @@ Skeleton::Skeleton()
     , mNeedToUpdateBoneMatrices(true)
     , mActive(true)
     , mLastFrameNumber(0)
+    , mTraversedEvenFrame(false)
+    , mTraversedOddFrame(false)
 {
 
 }
@@ -46,6 +50,8 @@ Skeleton::Skeleton(const Skeleton &copy, const osg::CopyOp &copyop)
     , mNeedToUpdateBoneMatrices(true)
     , mActive(copy.mActive)
     , mLastFrameNumber(0)
+    , mTraversedEvenFrame(false)
+    , mTraversedOddFrame(false)
 {
 
 }
@@ -59,7 +65,7 @@ Bone* Skeleton::getBone(const std::string &name)
         mBoneCacheInit = true;
     }
 
-    BoneCache::iterator found = mBoneCache.find(name);
+    BoneCache::iterator found = mBoneCache.find(Misc::StringUtils::lowerCase(name));
     if (found == mBoneCache.end())
         return NULL;
 
@@ -102,12 +108,17 @@ Bone* Skeleton::getBone(const std::string &name)
     return bone;
 }
 
-void Skeleton::updateBoneMatrices(osg::NodeVisitor* nv)
+void Skeleton::updateBoneMatrices(unsigned int traversalNumber)
 {
-    if (nv->getFrameStamp()->getFrameNumber() != mLastFrameNumber)
+    if (traversalNumber != mLastFrameNumber)
         mNeedToUpdateBoneMatrices = true;
 
-    mLastFrameNumber = nv->getFrameStamp()->getFrameNumber();
+    mLastFrameNumber = traversalNumber;
+
+    if (mLastFrameNumber % 2 == 0)
+        mTraversedEvenFrame = true;
+    else
+        mTraversedOddFrame = true;
 
     if (mNeedToUpdateBoneMatrices)
     {
@@ -133,9 +144,18 @@ bool Skeleton::getActive() const
     return mActive;
 }
 
+void Skeleton::markDirty()
+{
+    mTraversedEvenFrame = false;
+    mTraversedOddFrame = false;
+}
+
 void Skeleton::traverse(osg::NodeVisitor& nv)
 {
-    if (!mActive && nv.getVisitorType() == osg::NodeVisitor::UPDATE_VISITOR && mLastFrameNumber != 0)
+    if (!getActive() && nv.getVisitorType() == osg::NodeVisitor::UPDATE_VISITOR
+            // need to process at least 2 frames before shutting off update, since we need to have both frame-alternating RigGeometries initialized
+            // this would be more naturally handled if the double-buffering was implemented in RigGeometry itself rather than in a FrameSwitch decorator node
+            && mLastFrameNumber != 0 && mTraversedEvenFrame && mTraversedOddFrame)
         return;
     osg::Group::traverse(nv);
 }
@@ -157,6 +177,7 @@ void Bone::update(const osg::Matrixf* parentMatrixInSkeletonSpace)
     if (!mNode)
     {
         std::cerr << "Bone without node " << std::endl;
+        return;
     }
     if (parentMatrixInSkeletonSpace)
         mMatrixInSkeletonSpace = mNode->getMatrix() * (*parentMatrixInSkeletonSpace);

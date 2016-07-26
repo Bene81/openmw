@@ -18,6 +18,7 @@
 
 #include "../mwmechanics/creaturestats.hpp"
 #include "../mwmechanics/npcstats.hpp"
+#include "../mwmechanics/actorutil.hpp"
 
 #include "inventorywindow.hpp"
 #include "spellicons.hpp"
@@ -66,9 +67,9 @@ namespace MWGui
     };
 
 
-    HUD::HUD(CustomMarkerCollection &customMarkers, bool showFps, DragAndDrop* dragAndDrop, MWRender::LocalMap* localMapRender)
+    HUD::HUD(CustomMarkerCollection &customMarkers, DragAndDrop* dragAndDrop, MWRender::LocalMap* localMapRender)
         : Layout("openmw_hud.layout")
-        , LocalMapBase(customMarkers, localMapRender)
+        , LocalMapBase(customMarkers, localMapRender, Settings::Manager::getBool("local map hud fog of war", "Map"))
         , mHealth(NULL)
         , mMagicka(NULL)
         , mStamina(NULL)
@@ -84,8 +85,6 @@ namespace MWGui
         , mCellNameBox(NULL)
         , mDrowningFrame(NULL)
         , mDrowningFlash(NULL)
-        , mFpsBox(NULL)
-        , mFpsCounter(NULL)
         , mHealthManaStaminaBaseLeft(0)
         , mWeapBoxBaseLeft(0)
         , mSpellBoxBaseLeft(0)
@@ -160,9 +159,7 @@ namespace MWGui
 
         getWidget(mCrosshair, "Crosshair");
 
-        setFpsVisible(showFps);
-
-        LocalMapBase::init(mMinimap, mCompass, Settings::Manager::getInt("local map hud widget size", "Map"));
+        LocalMapBase::init(mMinimap, mCompass, Settings::Manager::getInt("local map hud widget size", "Map"), Settings::Manager::getInt("local map cell distance", "Map"));
 
         mMainWidget->eventMouseButtonClick += MyGUI::newDelegate(this, &HUD::onWorldClicked);
         mMainWidget->eventMouseMove += MyGUI::newDelegate(this, &HUD::onWorldMouseOver);
@@ -178,28 +175,6 @@ namespace MWGui
         mMainWidget->eventMouseButtonClick.clear();
 
         delete mSpellIcons;
-    }
-
-    void HUD::setFpsVisible(const bool visible)
-    {
-        mFpsCounter = 0;
-
-        MyGUI::Widget* fps;
-        getWidget(fps, "FPSBox");
-        fps->setVisible(false);
-
-        if (visible)
-        {
-            getWidget(mFpsBox, "FPSBox");
-            //mFpsBox->setVisible(true);
-            getWidget(mFpsCounter, "FPSCounter");
-        }
-    }
-
-    void HUD::setFPS(float fps)
-    {
-        if (mFpsCounter)
-            mFpsCounter->setCaption(MyGUI::utility::toString((int)fps));
     }
 
     void HUD::setValue(const std::string& id, const MWMechanics::DynamicStat<float>& value)
@@ -221,7 +196,7 @@ namespace MWGui
             mMagicka->setProgressRange (modified);
             mMagicka->setProgressPosition (current);
             getWidget(w, "MagickaFrame");
-            w->setUserString("Caption_HealthDescription", "#{sIntDesc}\n" + valStr);
+            w->setUserString("Caption_HealthDescription", "#{sMagDesc}\n" + valStr);
         }
         else if (id == "FBar")
         {
@@ -259,7 +234,7 @@ namespace MWGui
         {
             // drop item into the gameworld
             MWBase::Environment::get().getWorld()->breakInvisibility(
-                        MWBase::Environment::get().getWorld()->getPlayerPtr());
+                        MWMechanics::getPlayer());
 
             MyGUI::IntSize viewSize = MyGUI::RenderManager::getInstance().getViewSize();
             MyGUI::IntPoint cursorPosition = MyGUI::InputManager::getInstance().getMousePosition();
@@ -338,7 +313,7 @@ namespace MWGui
 
     void HUD::onWeaponClicked(MyGUI::Widget* _sender)
     {
-        const MWWorld::Ptr& player = MWBase::Environment::get().getWorld()->getPlayerPtr();
+        const MWWorld::Ptr& player = MWMechanics::getPlayer();
         if (player.getClass().getNpcStats(player).isWerewolf())
         {
             MWBase::Environment::get().getWindowManager()->messageBox("#{sWerewolfRefusal}");
@@ -350,7 +325,7 @@ namespace MWGui
 
     void HUD::onMagicClicked(MyGUI::Widget* _sender)
     {
-        const MWWorld::Ptr& player = MWBase::Environment::get().getWorld()->getPlayerPtr();
+        const MWWorld::Ptr& player = MWMechanics::getPlayer();
         if (player.getClass().getNpcStats(player).isWerewolf())
         {
             MWBase::Environment::get().getWindowManager()->messageBox("#{sWerewolfRefusal}");

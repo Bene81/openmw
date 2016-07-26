@@ -1,15 +1,11 @@
 #ifndef COMPONENTS_FILES_CONFIGURATIONMANAGER_HPP
 #define COMPONENTS_FILES_CONFIGURATIONMANAGER_HPP
 
-#if defined(_WIN32) && !defined(__MINGW32__)
-#include <boost/tr1/tr1/unordered_map>
-#elif defined HAVE_UNORDERED_MAP
-#include <unordered_map>
-#else
-#include <tr1/unordered_map>
-#endif
+#include <map>
+#include <queue>
 
 #include <boost/program_options.hpp>
+#include <boost/iostreams/filtering_stream.hpp>
 
 #include <components/files/fixedpath.hpp>
 #include <components/files/collections.hpp>
@@ -52,13 +48,9 @@ struct ConfigurationManager
         typedef Files::FixedPath<> FixedPathType;
 
         typedef const boost::filesystem::path& (FixedPathType::*path_type_f)() const;
-	#if defined HAVE_UNORDERED_MAP
-            typedef std::unordered_map<std::string, path_type_f> TokensMappingContainer;
-	#else
-            typedef std::tr1::unordered_map<std::string, path_type_f> TokensMappingContainer;
-	#endif
+        typedef std::map<std::string, path_type_f> TokensMappingContainer;
 
-        void loadConfig(const boost::filesystem::path& path,
+        bool loadConfig(const boost::filesystem::path& path,
             boost::program_options::variables_map& variables,
             boost::program_options::options_description& description);
 
@@ -71,6 +63,65 @@ struct ConfigurationManager
         TokensMappingContainer mTokensMapping;
 
         bool mSilent;
+};
+
+
+/**
+ * \struct escape_hash_filter
+ */
+struct escape_hash_filter : public boost::iostreams::input_filter
+{
+    static const int sEscape;
+    static const int sHashIdentifier;
+    static const int sEscapeIdentifier;
+
+    escape_hash_filter();
+    virtual ~escape_hash_filter();
+
+    template <typename Source> int get(Source & src);
+
+    private:
+        std::queue<int> mNext;
+        int mPrevious;
+
+        bool mSeenNonWhitespace;
+        bool mFinishLine;
+};
+
+/**
+ * \class EscapeHashString
+ */
+class EscapeHashString
+{
+    private:
+        std::string mData;
+    public:
+        static std::string processString(const std::string & str);
+
+        EscapeHashString();
+        EscapeHashString(const std::string & str);
+        EscapeHashString(const std::string & str, size_t pos, size_t len = std::string::npos);
+        EscapeHashString(const char * s);
+        EscapeHashString(const char * s, size_t n);
+        EscapeHashString(size_t n, char c);
+        template <class InputIterator>
+        EscapeHashString(InputIterator first, InputIterator last);
+
+        std::string toStdString() const;
+
+        friend std::ostream & operator<< (std::ostream & os, const EscapeHashString & eHS);
+};
+
+std::istream & operator>> (std::istream & is, EscapeHashString & eHS);
+
+struct EscapeStringVector
+{
+    std::vector<Files::EscapeHashString> mVector;
+
+    EscapeStringVector();
+    virtual ~EscapeStringVector();
+
+    std::vector<std::string> toStdStringVector() const;
 };
 
 } /* namespace Cfg */

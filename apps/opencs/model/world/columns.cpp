@@ -1,9 +1,9 @@
-
 #include "columns.hpp"
 
 #include <components/misc/stringops.hpp>
 
 #include "universalid.hpp"
+#include "infoselectwrapper.hpp"
 
 namespace CSMWorld
 {
@@ -35,6 +35,8 @@ namespace CSMWorld
             { ColumnId_Volume, "Volume" },
             { ColumnId_MinRange, "Min Range" },
             { ColumnId_MaxRange, "Max Range" },
+            { ColumnId_MinMagnitude, "Min Magnitude" },
+            { ColumnId_MaxMagnitude, "Max Magnitude" },
             { ColumnId_SoundFile, "Sound File" },
             { ColumnId_MapColour, "Map Colour" },
             { ColumnId_SleepEncounter, "Sleep Encounter" },
@@ -70,7 +72,6 @@ namespace CSMWorld
             { ColumnId_Weight, "Weight" },
             { ColumnId_EnchantmentPoints, "Enchantment Points" },
             { ColumnId_Quality, "Quality" },
-            { ColumnId_Ai, "AI" },
             { ColumnId_AiHello, "AI Hello" },
             { ColumnId_AiFlee, "AI Flee" },
             { ColumnId_AiFight, "AI Fight" },
@@ -107,7 +108,6 @@ namespace CSMWorld
             { ColumnId_OriginalCreature, "Original Creature" },
             { ColumnId_Biped, "Biped" },
             { ColumnId_HasWeapon, "Has Weapon" },
-            { ColumnId_NoMovement, "No Movement" },
             { ColumnId_Swims, "Swims" },
             { ColumnId_Flies, "Flies" },
             { ColumnId_Walks, "Walks" },
@@ -199,8 +199,6 @@ namespace CSMWorld
             { ColumnId_RotY, "Rotation Y"},
             { ColumnId_RotZ, "Rotation Z"},
 
-            { ColumnId_Skill, "Skill" },
-
             { ColumnId_OwnerGlobal, "Owner Global" },
             { ColumnId_DefaultProfile, "Default Profile" },
             { ColumnId_BypassNewGame, "Bypass New Game" },
@@ -252,7 +250,7 @@ namespace CSMWorld
             { ColumnId_AiWanderDist, "Wander Dist" },
             { ColumnId_AiDuration, "Ai Duration" },
             { ColumnId_AiWanderToD, "Wander ToD" },
-            { ColumnId_AiWanderIdle, "Wander Idle" },
+            //{ ColumnId_AiWanderIdle, "Wander Idle" },
             { ColumnId_AiWanderRepeat, "Wander Repeat" },
             { ColumnId_AiActivateName, "Activate" },
             { ColumnId_AiTargetId, "Target ID" },
@@ -265,42 +263,39 @@ namespace CSMWorld
 
             { ColumnId_LevelledList,"Levelled List" },
             { ColumnId_LevelledItemId,"Levelled Item" },
-            { ColumnId_LevelledItemLevel,"Level" },
+            { ColumnId_LevelledItemLevel,"Item Level" },
             { ColumnId_LevelledItemType, "Calculate all levels <= player" },
             { ColumnId_LevelledItemTypeEach, "Select a new item each instance" },
             { ColumnId_LevelledItemChanceNone, "Chance None" },
 
             { ColumnId_PowerList, "Powers" },
-            { ColumnId_SkillImpact, "Skills" },
+            { ColumnId_Skill, "Skill" },
 
             { ColumnId_InfoList, "Info List" },
             { ColumnId_InfoCondition, "Info Conditions" },
             { ColumnId_InfoCondFunc, "Function" },
-            { ColumnId_InfoCondVar, "Func/Variable" },
-            { ColumnId_InfoCondComp, "Comp" },
+            { ColumnId_InfoCondVar, "Variable/Object" },
+            { ColumnId_InfoCondComp, "Relation" },
             { ColumnId_InfoCondValue, "Values" },
             { ColumnId_OriginalCell, "Original Cell" },
 
-            { ColumnId_NpcAttributes, "Attributes" },
-            { ColumnId_NpcSkills, "Skills" },
+            { ColumnId_NpcAttributes, "NPC Attributes" },
+            { ColumnId_NpcSkills, "NPC Skill" },
             { ColumnId_UChar, "Value [0..255]" },
-            { ColumnId_NpcMisc, "Misc" },
-            { ColumnId_NpcLevel, "Level" },
+            { ColumnId_NpcMisc, "NPC Misc" },
+            { ColumnId_Level, "Level" },
             { ColumnId_NpcFactionID, "Faction ID" },
-            { ColumnId_NpcHealth, "Health" },
-            { ColumnId_NpcMana, "Mana" },
-            { ColumnId_NpcFatigue, "Fatigue" },
-            { ColumnId_NpcDisposition, "Disposition" },
+            { ColumnId_Mana, "Mana" },
+            { ColumnId_Fatigue, "Fatigue" },
+            { ColumnId_NpcDisposition, "NPC Disposition" },
             { ColumnId_NpcReputation, "Reputation" },
-            { ColumnId_NpcRank, "Rank" },
-            { ColumnId_NpcGold, "Gold" },
+            { ColumnId_NpcRank, "NPC Rank" },
+            { ColumnId_Gold, "Gold" },
             { ColumnId_NpcPersistence, "Persistent" },
 
-            { ColumnId_RaceAttributes, "Attributes" },
-            { ColumnId_RaceMaleValue, "Male" },
-            { ColumnId_RaceFemaleValue, "Female" },
+            { ColumnId_RaceAttributes, "Race Attributes" },
+            { ColumnId_Male, "Male" },
             { ColumnId_RaceSkillBonus, "Skill Bonus" },
-            { ColumnId_RaceSkill, "Skills" },
             { ColumnId_RaceBonus, "Bonus" },
 
             { ColumnId_Interior, "Interior" },
@@ -314,6 +309,26 @@ namespace CSMWorld
             { ColumnId_FileFormat, "File Format" },
             { ColumnId_FileDescription, "File Description" },
             { ColumnId_Author, "Author" },
+
+            { ColumnId_CreatureAttributes, "Creature Attributes" },
+            { ColumnId_AttributeValue, "Attrib Value" },
+            { ColumnId_CreatureAttack, "Creature Attack" },
+            { ColumnId_MinAttack, "Min Attack" },
+            { ColumnId_MaxAttack, "Max Attack" },
+            { ColumnId_CreatureMisc, "Creature Misc" },
+
+            { ColumnId_Idle1, "Idle 1" },
+            { ColumnId_Idle2, "Idle 2" },
+            { ColumnId_Idle3, "Idle 3" },
+            { ColumnId_Idle4, "Idle 4" },
+            { ColumnId_Idle5, "Idle 5" },
+            { ColumnId_Idle6, "Idle 6" },
+            { ColumnId_Idle7, "Idle 7" },
+            { ColumnId_Idle8, "Idle 8" },
+
+            { ColumnId_RegionWeather, "Weather" },
+            { ColumnId_WeatherName, "Type" },
+            { ColumnId_WeatherChance, "Percent Chance" },
 
             { ColumnId_UseValue1, "Use value 1" },
             { ColumnId_UseValue2, "Use value 2" },
@@ -536,23 +551,6 @@ namespace
         "AI Wander", "AI Travel", "AI Follow", "AI Escort", "AI Activate", 0
     };
 
-    static const char *sAiWanderRepeat[] =
-    {
-        "No", "Yes", 0
-    };
-
-    static const char *sInfoCondFunc[] =
-    {
-        " ", "Function", "Global", "Local", "Journal",
-        "Item", "Dead", "Not ID", "Not Faction", "Not Class",
-        "Not Race", "Not Cell", "Not Local", 0
-    };
-
-    static const char *sInfoCondComp[] =
-    {
-        "!=", "<", "<=", "=", ">", ">=", 0
-    };
-
     const char **getEnumNames (CSMWorld::Columns::ColumnId column)
     {
         switch (column)
@@ -575,17 +573,13 @@ namespace
             case CSMWorld::Columns::ColumnId_MeshType: return sMeshTypes;
             case CSMWorld::Columns::ColumnId_SoundGeneratorType: return sSoundGeneratorType;
             case CSMWorld::Columns::ColumnId_School: return sSchools;
-            case CSMWorld::Columns::ColumnId_SkillImpact: return sSkills;
+            case CSMWorld::Columns::ColumnId_Skill: return sSkills;
             case CSMWorld::Columns::ColumnId_EffectRange: return sEffectRange;
             case CSMWorld::Columns::ColumnId_EffectId: return sEffectId;
             case CSMWorld::Columns::ColumnId_PartRefType: return sPartRefType;
             case CSMWorld::Columns::ColumnId_AiPackageType: return sAiPackageType;
-            case CSMWorld::Columns::ColumnId_AiWanderRepeat: return sAiWanderRepeat;
-            case CSMWorld::Columns::ColumnId_InfoCondFunc: return sInfoCondFunc;
-            // FIXME: don't have dynamic value enum delegate, use Display_String for now
-            //case CSMWorld::Columns::ColumnId_InfoCond: return sInfoCond;
-            case CSMWorld::Columns::ColumnId_InfoCondComp: return sInfoCondComp;
-            case CSMWorld::Columns::ColumnId_RaceSkill: return sSkills;
+            case CSMWorld::Columns::ColumnId_InfoCondFunc: return CSMWorld::ConstInfoSelectWrapper::FunctionEnumStrings;
+            case CSMWorld::Columns::ColumnId_InfoCondComp: return CSMWorld::ConstInfoSelectWrapper::RelationEnumStrings;
 
             default: return 0;
         }

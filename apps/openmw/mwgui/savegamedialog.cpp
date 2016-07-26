@@ -1,5 +1,8 @@
 #include "savegamedialog.hpp"
 
+#include <sstream>
+#include <iomanip>
+
 #include <MyGUI_ComboBox.h>
 #include <MyGUI_ImageBox.h>
 #include <MyGUI_ListBox.h>
@@ -83,16 +86,20 @@ namespace MWGui
     {
         MWBase::Environment::get().getStateManager()->deleteGame (mCurrentCharacter, mCurrentSlot);
         mSaveList->removeItemAt(mSaveList->getIndexSelected());
-        onSlotSelected(mSaveList, MyGUI::ITEM_NONE);
+        onSlotSelected(mSaveList, mSaveList->getIndexSelected());
+        MWBase::Environment::get().getWindowManager()->setKeyFocusWidget(mSaveList);
 
-        // The character might be deleted now
-        size_t previousIndex = mCharacterSelection->getIndexSelected();
-        open();
-        if (mCharacterSelection->getItemCount())
+        if (mSaveList->getItemCount() == 0)
         {
-            size_t nextCharacter = std::min(previousIndex, mCharacterSelection->getItemCount()-1);
-            mCharacterSelection->setIndexSelected(nextCharacter);
-            onCharacterSelected(mCharacterSelection, nextCharacter);
+            // The character might be deleted now
+            size_t previousIndex = mCharacterSelection->getIndexSelected();
+            open();
+            if (mCharacterSelection->getItemCount())
+            {
+                size_t nextCharacter = std::min(previousIndex, mCharacterSelection->getItemCount()-1);
+                mCharacterSelection->setIndexSelected(nextCharacter);
+                onCharacterSelected(mCharacterSelection, nextCharacter);
+            }
         }
     }
 
@@ -129,7 +136,7 @@ namespace MWGui
         if (mgr->characterBegin() == mgr->characterEnd())
             return;
 
-        mCurrentCharacter = mgr->getCurrentCharacter (false);
+        mCurrentCharacter = mgr->getCurrentCharacter();
 
         std::string directory =
             Misc::StringUtils::lowerCase (Settings::Manager::getString ("character", "Saves"));
@@ -199,7 +206,7 @@ namespace MWGui
 
         if (!load)
         {
-            mCurrentCharacter = MWBase::Environment::get().getStateManager()->getCurrentCharacter (false);
+            mCurrentCharacter = MWBase::Environment::get().getStateManager()->getCurrentCharacter();
         }
 
         center();
@@ -309,6 +316,22 @@ namespace MWGui
             onSlotSelected(mSaveList, MyGUI::ITEM_NONE);
     }
 
+    std::string formatTimeplayed(const double timeInSeconds)
+    {
+        int timePlayed = (int)floor(timeInSeconds);
+        int days = timePlayed / 60 / 60 / 24;
+        int hours = (timePlayed / 60 / 60) % 24;
+        int minutes = (timePlayed / 60) % 60;
+        int seconds = timePlayed % 60;
+
+        std::stringstream stream;
+        stream << std::setfill('0') << std::setw(2) << days << ":";
+        stream << std::setfill('0') << std::setw(2) << hours << ":";
+        stream << std::setfill('0') << std::setw(2) << minutes << ":";
+        stream << std::setfill('0') << std::setw(2) << seconds;
+        return stream.str();
+    }
+
     void SaveGameDialog::onSlotSelected(MyGUI::ListBox *sender, size_t pos)
     {
         mOkButton->setEnabled(pos != MyGUI::ITEM_NONE || mSaving);
@@ -341,15 +364,19 @@ namespace MWGui
         timeinfo = localtime(&time);
 
         // Use system/environment locale settings for datetime formatting
+        char* oldLctime = setlocale(LC_TIME, NULL);
         setlocale(LC_TIME, "");
 
         const int size=1024;
         char buffer[size];
         if (std::strftime(buffer, size, "%x %X", timeinfo) > 0)
             text << buffer << "\n";
-        text << "Level " << mCurrentSlot->mProfile.mPlayerLevel << "\n";
-        text << mCurrentSlot->mProfile.mPlayerCell << "\n";
-        // text << "Time played: " << slot->mProfile.mTimePlayed << "\n";
+
+        // reset
+        setlocale(LC_TIME, oldLctime);
+
+        text << "#{sLevel} " << mCurrentSlot->mProfile.mPlayerLevel << "\n";
+        text << "#{sCell=" << mCurrentSlot->mProfile.mPlayerCell << "}\n";
 
         int hour = int(mCurrentSlot->mProfile.mInGameTime.mGameHour);
         bool pm = hour >= 12;
@@ -360,6 +387,11 @@ namespace MWGui
             << mCurrentSlot->mProfile.mInGameTime.mDay << " "
             << MWBase::Environment::get().getWorld()->getMonthName(mCurrentSlot->mProfile.mInGameTime.mMonth)
             <<  " " << hour << " " << (pm ? "#{sSaveMenuHelp05}" : "#{sSaveMenuHelp04}");
+
+        if (Settings::Manager::getBool("timeplayed","Saves"))
+        {
+            text << "\n" << "Time played: " << formatTimeplayed(mCurrentSlot->mProfile.mTimePlayed);
+        }
 
         mInfoText->setCaptionWithReplacing(text.str());
 
@@ -378,7 +410,7 @@ namespace MWGui
         osgDB::ReaderWriter::ReadResult result = readerwriter->readImage(instream);
         if (!result.success())
         {
-            std::cerr << "Failed to read savegame screenshot: " << result.message() << std::endl;
+            std::cerr << "Failed to read savegame screenshot: " << result.message() << " code " << result.status() << std::endl;
             return;
         }
 
@@ -394,6 +426,6 @@ namespace MWGui
         mScreenshotTexture.reset(new osgMyGUI::OSGTexture(texture));
 
         mScreenshot->setRenderItemTexture(mScreenshotTexture.get());
-        mScreenshot->getSubWidgetMain()->_setUVSet(MyGUI::FloatRect(0.f, 1.f, 1.f, 0.f));
+        mScreenshot->getSubWidgetMain()->_setUVSet(MyGUI::FloatRect(0.f, 0.f, 1.f, 1.f));
     }
 }

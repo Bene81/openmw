@@ -10,13 +10,11 @@ namespace MWRender
     class TerrainStorage : public ESMTerrain::Storage
     {
     private:
-        virtual ESM::Land* getLand (int cellX, int cellY);
+        virtual const ESM::Land* getLand (int cellX, int cellY);
         virtual const ESM::LandTexture* getLandTexture(int index, short plugin);
     public:
 
-        ///@param preload Preload all Land records at startup? If using the multithreaded terrain component, this
-        /// should be set to "true" in order to avoid race conditions.
-        TerrainStorage(const VFS::Manager* vfs, bool preload);
+        TerrainStorage(const VFS::Manager* vfs, const std::string& normalMapPattern = "", const std::string& normalHeightMapPatteern = "", bool autoUseNormalMaps = false, const std::string& specularMapPattern = "", bool autoUseSpecularMaps = false);
 
         /// Get bounds of the whole terrain in cell units
         virtual void getBounds(float& minX, float& maxX, float& minY, float& maxY);

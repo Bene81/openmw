@@ -5,38 +5,34 @@
 namespace Nif
 {
 
-void NiLight::SLight::read(NIFStream *nif)
+void NiLight::read(NIFStream *nif)
 {
+    NiDynamicEffect::read(nif);
+
     dimmer = nif->getFloat();
     ambient = nif->getVector3();
     diffuse = nif->getVector3();
     specular = nif->getVector3();
 }
 
-void NiLight::read(NIFStream *nif)
-{
-    Effect::read(nif);
-
-    nif->getInt(); // 1
-    nif->getInt(); // 1?
-    light.read(nif);
-}
-
 void NiTextureEffect::read(NIFStream *nif)
 {
-    Effect::read(nif);
+    NiDynamicEffect::read(nif);
 
-    int tmp = nif->getInt();
-    if(tmp) nif->getInt(); // always 1?
+    // Model Projection Matrix
+    nif->skip(3 * 3 * sizeof(float));
 
-    /*
-           3 x Vector4 = [1,0,0,0]
-           int = 2
-           int = 0 or 3
-           int = 2
-           int = 2
-        */
-    nif->skip(16*4);
+    // Model Projection Transform
+    nif->skip(3 * sizeof(float));
+
+    // Texture Filtering
+    nif->skip(4);
+
+    clamp = nif->getUInt();
+
+    textureType = (TextureType)nif->getUInt();
+
+    coordGenType = (CoordGenType)nif->getUInt();
 
     texture.read(nif);
 
@@ -52,10 +48,25 @@ void NiTextureEffect::read(NIFStream *nif)
 
 void NiTextureEffect::post(NIFFile *nif)
 {
-    Effect::post(nif);
+    NiDynamicEffect::post(nif);
     texture.post(nif);
 }
 
+void NiPointLight::read(NIFStream *nif)
+{
+    NiLight::read(nif);
 
+    constantAttenuation = nif->getFloat();
+    linearAttenuation = nif->getFloat();
+    quadraticAttenuation = nif->getFloat();
+}
+
+void NiSpotLight::read(NIFStream *nif)
+{
+    NiPointLight::read(nif);
+
+    cutoff = nif->getFloat();
+    exponent = nif->getFloat();
+}
 
 }

@@ -1,83 +1,55 @@
 #include "pathfinding.hpp"
 
+#include <limits>
+
 #include "../mwbase/world.hpp"
 #include "../mwbase/environment.hpp"
 
 #include "../mwworld/esmstore.hpp"
 #include "../mwworld/cellstore.hpp"
 
+#include "coordinateconverter.hpp"
+
 namespace
 {
-    // Slightly cheaper version for comparisons.
-    // Caller needs to be careful for very short distances (i.e. less than 1)
-    // or when accumuating the results i.e. (a + b)^2 != a^2 + b^2
-    //
-    float distanceSquared(ESM::Pathgrid::Point point, const osg::Vec3f& pos)
-    {
-        return (MWMechanics::PathFinder::MakeOsgVec3(point) - pos).length2();
-    }
-
-    // Return the closest pathgrid point index from the specified position co
-    // -ordinates.  NOTE: Does not check if there is a sensible way to get there
-    // (e.g. a cliff in front).
-    //
-    // NOTE: pos is expected to be in local co-ordinates, as is grid->mPoints
-    //
-    int getClosestPoint(const ESM::Pathgrid* grid, const osg::Vec3f& pos)
-    {
-        if(!grid || grid->mPoints.empty())
-            return -1;
-
-        float distanceBetween = distanceSquared(grid->mPoints[0], pos);
-        int closestIndex = 0;
-
-        // TODO: if this full scan causes performance problems mapping pathgrid
-        //       points to a quadtree may help
-        for(unsigned int counter = 1; counter < grid->mPoints.size(); counter++)
-        {
-            float potentialDistBetween = distanceSquared(grid->mPoints[counter], pos);
-            if(potentialDistBetween < distanceBetween)
-            {
-                distanceBetween = potentialDistBetween;
-                closestIndex = counter;
-            }
-        }
-
-        return closestIndex;
-    }
-
     // Chooses a reachable end pathgrid point.  start is assumed reachable.
     std::pair<int, bool> getClosestReachablePoint(const ESM::Pathgrid* grid,
                                                   const MWWorld::CellStore *cell,
                                                   const osg::Vec3f pos, int start)
     {
-        if(!grid || grid->mPoints.empty())
-            return std::pair<int, bool> (-1, false);
+        assert(grid && !grid->mPoints.empty());
 
-        float distanceBetween = distanceSquared(grid->mPoints[0], pos);
+        float closestDistanceBetween = std::numeric_limits<float>::max();
+        float closestDistanceReachable = std::numeric_limits<float>::max();
         int closestIndex = 0;
         int closestReachableIndex = 0;
         // TODO: if this full scan causes performance problems mapping pathgrid
         //       points to a quadtree may help
-        for(unsigned int counter = 1; counter < grid->mPoints.size(); counter++)
+        for(unsigned int counter = 0; counter < grid->mPoints.size(); counter++)
         {
-            float potentialDistBetween = distanceSquared(grid->mPoints[counter], pos);
-            if(potentialDistBetween < distanceBetween)
+            float potentialDistBetween = MWMechanics::PathFinder::DistanceSquared(grid->mPoints[counter], pos);
+            if (potentialDistBetween < closestDistanceReachable)
             {
                 // found a closer one
-                distanceBetween = potentialDistBetween;
-                closestIndex = counter;
                 if (cell->isPointConnected(start, counter))
                 {
+                    closestDistanceReachable = potentialDistBetween;
                     closestReachableIndex = counter;
+                }
+                if (potentialDistBetween < closestDistanceBetween)
+                {
+                    closestDistanceBetween = potentialDistBetween;
+                    closestIndex = counter;
                 }
             }
         }
+
+        // post-condition: start and endpoint must be connected
+        assert(cell->isPointConnected(start, closestReachableIndex));
+
         // AiWander has logic that depends on whether a path was created, deleting
         // allowed nodes if not.  Hence a path needs to be created even if the start
         // and the end points are the same.
-        //if(start == closestReachableIndex)
-            //closestReachableIndex = -1; // couldn't find anyting other than start
 
         return std::pair<int, bool>
             (closestReachableIndex, closestReachableIndex == closestIndex);
@@ -87,14 +59,14 @@ namespace
 
 namespace MWMechanics
 {
-    float sqrDistanceIgnoreZ(ESM::Pathgrid::Point point, float x, float y)
+    float sqrDistanceIgnoreZ(const ESM::Pathgrid::Point& point, float x, float y)
     {
         x -= point.mX;
         y -= point.mY;
         return (x * x + y * y);
     }
 
-    float distance(ESM::Pathgrid::Point point, float x, float y, float z)
+    float distance(const ESM::Pathgrid::Point& point, float x, float y, float z)
     {
         x -= point.mX;
         y -= point.mY;
@@ -102,7 +74,7 @@ namespace MWMechanics
         return sqrt(x * x + y * y + z * z);
     }
 
-    float distance(ESM::Pathgrid::Point a, ESM::Pathgrid::Point b)
+    float distance(const ESM::Pathgrid::Point& a, const ESM::Pathgrid::Point& b)
     {
         float x = static_cast<float>(a.mX - b.mX);
         float y = static_cast<float>(a.mY - b.mY);
@@ -139,9 +111,7 @@ namespace MWMechanics
      * pathgrid point (e.g. wander) then it may be worth while to call
      * pop_back() to remove the redundant entry.
      *
-     * mPathConstructed is set true if successful, false if not
-     *
-     * NOTE: co-ordinates must be converted prior to calling getClosestPoint()
+     * NOTE: co-ordinates must be converted prior to calling GetClosestPoint()
      *
      *    |
      *    |       cell
@@ -194,63 +164,69 @@ namespace MWMechanics
             return;
         }
 
-        // NOTE: getClosestPoint expects local co-ordinates
-        float xCell = 0;
-        float yCell = 0;
-        if (mCell->isExterior())
-        {
-            xCell = static_cast<float>(mCell->getCell()->mData.mX * ESM::Land::REAL_SIZE);
-            yCell = static_cast<float>(mCell->getCell()->mData.mY * ESM::Land::REAL_SIZE);
-        }
+        // NOTE: GetClosestPoint expects local co-ordinates
+        CoordinateConverter converter(mCell->getCell());
 
-        // NOTE: It is possible that getClosestPoint returns a pathgrind point index
+        // NOTE: It is possible that GetClosestPoint returns a pathgrind point index
         //       that is unreachable in some situations. e.g. actor is standing
         //       outside an area enclosed by walls, but there is a pathgrid
         //       point right behind the wall that is closer than any pathgrid
         //       point outside the wall
-        int startNode = getClosestPoint(mPathgrid,
-                osg::Vec3f(startPoint.mX - xCell, startPoint.mY - yCell, static_cast<float>(startPoint.mZ)));
-        // Some cells don't have any pathgrids at all
-        if(startNode != -1)
+        osg::Vec3f startPointInLocalCoords(converter.toLocalVec3(startPoint));
+        int startNode = GetClosestPoint(mPathgrid, startPointInLocalCoords);
+
+        osg::Vec3f endPointInLocalCoords(converter.toLocalVec3(endPoint));
+        std::pair<int, bool> endNode = getClosestReachablePoint(mPathgrid, cell,
+            endPointInLocalCoords,
+                startNode);
+
+        // if it's shorter for actor to travel from start to end, than to travel from either
+        // start or end to nearest pathgrid point, just travel from start to end.
+        float startToEndLength2 = (endPointInLocalCoords - startPointInLocalCoords).length2();
+        float endTolastNodeLength2 = DistanceSquared(mPathgrid->mPoints[endNode.first], endPointInLocalCoords);
+        float startTo1stNodeLength2 = DistanceSquared(mPathgrid->mPoints[startNode], startPointInLocalCoords);
+        if ((startToEndLength2 < startTo1stNodeLength2) || (startToEndLength2 < endTolastNodeLength2))
         {
-            std::pair<int, bool> endNode = getClosestReachablePoint(mPathgrid, cell,
-                osg::Vec3f(endPoint.mX - xCell, endPoint.mY - yCell, static_cast<float>(endPoint.mZ)),
-                    startNode);
+            mPath.push_back(endPoint);
+            return;
+        }
 
-            // this shouldn't really happen, but just in case
-            if(endNode.first != -1)
+        // AiWander has logic that depends on whether a path was created,
+        // deleting allowed nodes if not.  Hence a path needs to be created
+        // even if the start and the end points are the same.
+        // NOTE: aStarSearch will return an empty path if the start and end
+        //       nodes are the same
+        if(startNode == endNode.first)
+        {
+            ESM::Pathgrid::Point temp(mPathgrid->mPoints[startNode]);
+            converter.toWorld(temp);
+            mPath.push_back(temp);
+        }
+        else
+        {
+            mPath = mCell->aStarSearch(startNode, endNode.first);
+
+            // convert supplied path to world co-ordinates
+            for (std::list<ESM::Pathgrid::Point>::iterator iter(mPath.begin()); iter != mPath.end(); ++iter)
             {
-                // AiWander has logic that depends on whether a path was created,
-                // deleting allowed nodes if not.  Hence a path needs to be created
-                // even if the start and the end points are the same.
-                // NOTE: aStarSearch will return an empty path if the start and end
-                //       nodes are the same
-                if(startNode == endNode.first)
-                {
-                    mPath.push_back(endPoint);
-                    return;
-                }
-
-                mPath = mCell->aStarSearch(startNode, endNode.first);
-
-                if(!mPath.empty())
-                {
-                    // Add the destination (which may be different to the closest
-                    // pathgrid point).  However only add if endNode was the closest
-                    // point to endPoint.
-                    //
-                    // This logic can fail in the opposite situate, e.g. endPoint may
-                    // have been reachable but happened to be very close to an
-                    // unreachable pathgrid point.
-                    //
-                    // The AI routines will have to deal with such situations.
-                    if(endNode.second)
-                        mPath.push_back(endPoint);
-                }
+                converter.toWorld(*iter);
             }
         }
 
-        return;
+        // If endNode found is NOT the closest PathGrid point to the endPoint,
+        // assume endPoint is not reachable from endNode. In which case, 
+        // path ends at endNode.
+        //
+        // So only add the destination (which may be different to the closest
+        // pathgrid point) when endNode was the closest point to endPoint.
+        //
+        // This logic can fail in the opposite situate, e.g. endPoint may
+        // have been reachable but happened to be very close to an
+        // unreachable pathgrid point.
+        //
+        // The AI routines will have to deal with such situations.
+        if(endNode.second)
+            mPath.push_back(endPoint);
     }
 
     float PathFinder::getZAngleToNext(float x, float y) const
@@ -272,7 +248,7 @@ namespace MWMechanics
         if(mPath.empty())
             return true;
 
-        ESM::Pathgrid::Point nextPoint = *mPath.begin();
+        const ESM::Pathgrid::Point& nextPoint = *mPath.begin();
         if (sqrDistanceIgnoreZ(nextPoint, x, y) < tolerance*tolerance)
         {
             mPath.pop_front();

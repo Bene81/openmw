@@ -7,8 +7,9 @@
 #include <map>
 #include <list>
 
-#include "movement.hpp"
 #include "../mwbase/world.hpp"
+
+#include "movement.hpp"
 
 namespace MWWorld
 {
@@ -19,6 +20,7 @@ namespace MWWorld
 namespace MWMechanics
 {
     class Actor;
+    class CreatureStats;
 
     class Actors
     {
@@ -42,6 +44,8 @@ namespace MWMechanics
             void updateCrimePersuit (const MWWorld::Ptr& ptr, float duration);
 
             void killDeadActors ();
+
+            void purgeSpellEffects (int casterActorId);
 
         public:
 
@@ -89,8 +93,8 @@ namespace MWMechanics
             void updateHeadTracking(const MWWorld::Ptr& actor, const MWWorld::Ptr& targetActor,
                                             MWWorld::Ptr& headTrackTarget, float& sqrHeadTrackDistance);
 
-            void restoreDynamicStats(bool sleep);
-            ///< If the player is sleeping, this should be called every hour.
+            void rest(bool sleep);
+            ///< Update actors while the player is waiting or sleeping. This should be called every hour.
 
             void restoreDynamicStats(const MWWorld::Ptr& actor, bool sleep);
 
@@ -105,14 +109,17 @@ namespace MWMechanics
 
         void forceStateUpdate(const MWWorld::Ptr &ptr);
 
-        void playAnimationGroup(const MWWorld::Ptr& ptr, const std::string& groupName, int mode, int number);
+        bool playAnimationGroup(const MWWorld::Ptr& ptr, const std::string& groupName, int mode, int number);
         void skipAnimation(const MWWorld::Ptr& ptr);
         bool checkAnimationPlaying(const MWWorld::Ptr& ptr, const std::string& groupName);
 
             void getObjectsInRange(const osg::Vec3f& position, float radius, std::vector<MWWorld::Ptr>& out);
 
-            ///Returns the list of actors which are following the given actor
-            /**ie AiFollow is active and the target is the actor **/
+            void cleanupSummonedCreature (CreatureStats& casterStats, int creatureActorId);
+
+            ///Returns the list of actors which are siding with the given actor in fights
+            /**ie AiFollow or AiEscort is active and the target is the actor **/
+            std::list<MWWorld::Ptr> getActorsSidingWith(const MWWorld::Ptr& actor);
             std::list<MWWorld::Ptr> getActorsFollowing(const MWWorld::Ptr& actor);
 
             /// Get the list of AiFollow::mFollowIndex for all actors following this target
@@ -121,6 +128,9 @@ namespace MWMechanics
             ///Returns the list of actors which are fighting the given actor
             /**ie AiCombat is active and the target is the actor **/
             std::list<MWWorld::Ptr> getActorsFighting(const MWWorld::Ptr& actor);
+
+            /// Unlike getActorsFighting, also returns actors that *would* fight the given actor if they saw him.
+            std::list<MWWorld::Ptr> getEnemiesNearby(const MWWorld::Ptr& actor);
 
             void write (ESM::ESMWriter& writer, Loading::Listener& listener) const;
 

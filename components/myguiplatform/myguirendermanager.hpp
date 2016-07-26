@@ -7,7 +7,7 @@
 
 namespace Resource
 {
-    class TextureManager;
+    class ImageManager;
 }
 
 namespace osgViewer
@@ -20,6 +20,7 @@ namespace osg
     class Group;
     class Camera;
     class RenderInfo;
+    class StateSet;
 }
 
 namespace osgMyGUI
@@ -32,7 +33,7 @@ class RenderManager : public MyGUI::RenderManager, public MyGUI::IRenderTarget
     osg::ref_ptr<osgViewer::Viewer> mViewer;
     osg::ref_ptr<osg::Group> mSceneRoot;
     osg::ref_ptr<Drawable> mDrawable;
-    Resource::TextureManager* mTextureManager;
+    Resource::ImageManager* mImageManager;
 
     MyGUI::IntSize mViewSize;
     bool mUpdate;
@@ -48,10 +49,12 @@ class RenderManager : public MyGUI::RenderManager, public MyGUI::IRenderTarget
 
     float mInvScalingFactor;
 
+    osg::StateSet* mInjectState;
+
     void destroyAllResources();
 
 public:
-    RenderManager(osgViewer::Viewer *viewer, osg::Group *sceneroot, Resource::TextureManager* textureManager, float scalingFactor);
+    RenderManager(osgViewer::Viewer *viewer, osg::Group *sceneroot, Resource::ImageManager* imageManager, float scalingFactor);
     virtual ~RenderManager();
 
     void initialise();
@@ -94,6 +97,9 @@ public:
     virtual void end();
     /** @see IRenderTarget::doRender */
     virtual void doRender(MyGUI::IVertexBuffer *buffer, MyGUI::ITexture *texture, size_t count);
+
+    /** specify a StateSet to inject for rendering. The StateSet will be used by future doRender calls until you reset it to NULL again. */
+    void setInjectState(osg::StateSet* stateSet);
 
     /** @see IRenderTarget::getInfo */
     virtual const MyGUI::RenderTargetInfo& getInfo() { return mInfo; }

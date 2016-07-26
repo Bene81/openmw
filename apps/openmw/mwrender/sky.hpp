@@ -1,15 +1,19 @@
 #ifndef OPENMW_MWRENDER_SKY_H
 #define OPENMW_MWRENDER_SKY_H
 
-#include <osg/ref_ptr>
+#include <string>
+#include <memory>
+#include <vector>
 
-#include "../mwworld/weather.hpp"
+#include <osg/ref_ptr>
+#include <osg/Vec4f>
 
 namespace osg
 {
     class Group;
     class Node;
     class Material;
+    class PositionAttitudeTransform;
 }
 
 namespace osgParticle
@@ -32,6 +36,49 @@ namespace MWRender
     class RainShooter;
     class RainFader;
     class AlphaFader;
+    class UnderwaterSwitchCallback;
+
+    struct WeatherResult
+    {
+        std::string mCloudTexture;
+        std::string mNextCloudTexture;
+        float mCloudBlendFactor;
+
+        osg::Vec4f mFogColor;
+
+        osg::Vec4f mAmbientColor;
+
+        osg::Vec4f mSkyColor;
+
+        // sun light color
+        osg::Vec4f mSunColor;
+
+        // alpha is the sun transparency
+        osg::Vec4f mSunDiscColor;
+
+        float mFogDepth;
+
+        float mWindSpeed;
+
+        float mCloudSpeed;
+
+        float mGlareView;
+
+        bool mNight; // use night skybox
+        float mNightFade; // fading factor for night skybox
+
+        bool mIsStorm;
+
+        std::string mAmbientLoopSoundID;
+        float mAmbientSoundVolume;
+
+        std::string mParticleEffect;
+        std::string mRainEffect;
+        float mEffectFade;
+
+        float mRainSpeed;
+        float mRainFrequency;
+    };
 
     struct MoonState
     {
@@ -55,6 +102,8 @@ namespace MWRender
         float mMoonAlpha;
     };
 
+    ///@brief The SkyManager handles rendering of the sky domes, celestial bodies as well as other objects that need to be rendered
+    /// relative to the camera (e.g. weather particle effects)
     class SkyManager
     {
     public:
@@ -82,7 +131,7 @@ namespace MWRender
         void setMoonColour (bool red);
         ///< change Secunda colour to red
 
-        void setWeather(const MWWorld::WeatherResult& weather);
+        void setWeather(const WeatherResult& weather);
 
         void sunEnable();
 
@@ -97,10 +146,15 @@ namespace MWRender
         void setMasserState(const MoonState& state);
         void setSecundaState(const MoonState& state);
 
-        void setLightningStrength(const float factor);
+        void setGlareTimeOfDayFade(float val);
 
-        void setGlare(const float glare);
-        void setGlareEnabled(bool enabled);
+        /// Enable or disable the water plane (used to remove underwater weather particles)
+        void setWaterEnabled(bool enabled);
+
+        /// Set height of water plane (used to remove underwater weather particles)
+        void setWaterHeight(float height);
+
+        void listAssetsToPreload(std::vector<std::string>& models, std::vector<std::string>& textures);
 
     private:
         void create();
@@ -113,10 +167,12 @@ namespace MWRender
         Resource::SceneManager* mSceneManager;
 
         osg::ref_ptr<osg::Group> mRootNode;
+        osg::ref_ptr<osg::Group> mEarlyRenderBinRoot;
 
         osg::ref_ptr<osg::PositionAttitudeTransform> mParticleNode;
         osg::ref_ptr<osg::Node> mParticleEffect;
-        osg::ref_ptr<AlphaFader> mParticleFader;
+        std::vector<osg::ref_ptr<AlphaFader> > mParticleFaders;
+        osg::ref_ptr<UnderwaterSwitchCallback> mUnderwaterSwitch;
 
         osg::ref_ptr<osg::PositionAttitudeTransform> mCloudNode;
 
@@ -159,7 +215,6 @@ namespace MWRender
         std::string mClouds;
         std::string mNextClouds;
         float mCloudBlendFactor;
-        float mCloudOpacity;
         float mCloudSpeed;
         float mStarsOpacity;
         osg::Vec4f mCloudColour;
@@ -169,9 +224,6 @@ namespace MWRender
         std::string mCurrentParticleEffect;
 
         float mRemainingTransitionTime;
-
-        float mGlare; // target
-        float mGlareFade; // actual
 
         bool mRainEnabled;
         std::string mRainEffect;

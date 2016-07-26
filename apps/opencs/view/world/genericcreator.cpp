@@ -1,4 +1,3 @@
-
 #include "genericcreator.hpp"
 
 #include <memory>
@@ -41,11 +40,25 @@ void CSVWorld::GenericCreator::insertAtBeginning (QWidget *widget, bool stretche
 void CSVWorld::GenericCreator::insertBeforeButtons (QWidget *widget, bool stretched)
 {
     mLayout->insertWidget (mLayout->count()-2, widget, stretched ? 1 : 0);
+
+    // Reset tab order relative to buttons.
+    setTabOrder(widget, mCreate);
+    setTabOrder(mCreate, mCancel);
 }
 
 std::string CSVWorld::GenericCreator::getId() const
 {
     return mId->text().toUtf8().constData();
+}
+
+std::string CSVWorld::GenericCreator::getIdValidatorResult() const
+{
+    std::string errors;
+
+    if (!mId->hasAcceptableInput())
+        errors = mValidator->getError();
+
+    return errors;
 }
 
 void CSVWorld::GenericCreator::configureCreateCommand (CSMWorld::CreateCommand& command) const {}
@@ -152,15 +165,16 @@ CSVWorld::GenericCreator::GenericCreator (CSMWorld::Data& data, QUndoStack& undo
     mCreate = new QPushButton ("Create");
     mLayout->addWidget (mCreate);
 
-    QPushButton *cancelButton = new QPushButton ("Cancel");
-    mLayout->addWidget (cancelButton);
+    mCancel = new QPushButton("Cancel");
+    mLayout->addWidget(mCancel);
 
     setLayout (mLayout);
 
-    connect (cancelButton, SIGNAL (clicked (bool)), this, SIGNAL (done()));
+    connect (mCancel, SIGNAL (clicked (bool)), this, SIGNAL (done()));
     connect (mCreate, SIGNAL (clicked (bool)), this, SLOT (create()));
 
     connect (mId, SIGNAL (textChanged (const QString&)), this, SLOT (textChanged (const QString&)));
+    connect (mId, SIGNAL (returnPressed()), this, SLOT (inputReturnPressed()));
 
     connect (&mData, SIGNAL (idListChanged()), this, SLOT (dataIdListChanged()));
 }
@@ -194,6 +208,14 @@ std::string CSVWorld::GenericCreator::getErrors() const
 void CSVWorld::GenericCreator::textChanged (const QString& text)
 {
     update();
+}
+
+void CSVWorld::GenericCreator::inputReturnPressed()
+{
+    if (mCreate->isEnabled())
+    {
+        create();
+    }
 }
 
 void CSVWorld::GenericCreator::create()

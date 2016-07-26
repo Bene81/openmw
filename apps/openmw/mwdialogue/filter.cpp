@@ -1,4 +1,3 @@
-
 #include "filter.hpp"
 
 #include <components/compiler/locals.hpp>
@@ -18,6 +17,7 @@
 #include "../mwmechanics/npcstats.hpp"
 #include "../mwmechanics/creaturestats.hpp"
 #include "../mwmechanics/magiceffects.hpp"
+#include "../mwmechanics/actorutil.hpp"
 
 #include "selectwrapper.hpp"
 
@@ -28,7 +28,7 @@ bool MWDialogue::Filter::testActor (const ESM::DialInfo& info) const
     // actor id
     if (!info.mActor.empty())
     {
-        if ( !Misc::StringUtils::ciEqual(info.mActor, mActor.getClass().getId (mActor)))
+        if ( !Misc::StringUtils::ciEqual(info.mActor, mActor.getCellRef().getRefId()))
             return false;
     }
     else if (isCreature)
@@ -41,7 +41,7 @@ bool MWDialogue::Filter::testActor (const ESM::DialInfo& info) const
     if (!info.mRace.empty())
     {
         if (isCreature)
-            return false;
+            return true;
 
         MWWorld::LiveCellRef<ESM::NPC> *cellRef = mActor.get<ESM::NPC>();
 
@@ -53,7 +53,7 @@ bool MWDialogue::Filter::testActor (const ESM::DialInfo& info) const
     if (!info.mClass.empty())
     {
         if (isCreature)
-            return false;
+            return true;
 
         MWWorld::LiveCellRef<ESM::NPC> *cellRef = mActor.get<ESM::NPC>();
 
@@ -62,10 +62,18 @@ bool MWDialogue::Filter::testActor (const ESM::DialInfo& info) const
     }
 
     // NPC faction
-    if (!info.mFaction.empty())
+    if (info.mFactionLess)
     {
         if (isCreature)
+            return true;
+
+        if (!mActor.getClass().getPrimaryFaction(mActor).empty())
             return false;
+    }
+    else if (!info.mFaction.empty())
+    {
+        if (isCreature)
+            return true;
 
         if (!Misc::StringUtils::ciEqual(mActor.getClass().getPrimaryFaction(mActor), info.mFaction))
             return false;
@@ -77,7 +85,7 @@ bool MWDialogue::Filter::testActor (const ESM::DialInfo& info) const
     else if (info.mData.mRank != -1)
     {
         if (isCreature)
-            return false;
+            return true;
 
         // Rank requirement, but no faction given. Use the actor's faction, if there is one.
         // check rank
@@ -98,7 +106,7 @@ bool MWDialogue::Filter::testActor (const ESM::DialInfo& info) const
 
 bool MWDialogue::Filter::testPlayer (const ESM::DialInfo& info) const
 {
-    const MWWorld::Ptr player = MWBase::Environment::get().getWorld()->getPlayerPtr();
+    const MWWorld::Ptr player = MWMechanics::getPlayer();
 
     // check player faction
     if (!info.mPcFaction.empty())
@@ -145,8 +153,7 @@ bool MWDialogue::Filter::testDisposition (const ESM::DialInfo& info, bool invert
     if (isCreature)
         return true;
 
-    int actorDisposition = MWBase::Environment::get().getMechanicsManager()->getDerivedDisposition(mActor)
-            + MWBase::Environment::get().getDialogueManager()->getTemporaryDispositionChange();
+    int actorDisposition = MWBase::Environment::get().getMechanicsManager()->getDerivedDisposition(mActor);
     // For service refusal, the disposition check is inverted. However, a value of 0 still means "always succeed".
     return invert ? (info.mData.mDisposition == 0 || actorDisposition < info.mData.mDisposition)
                   : (actorDisposition >= info.mData.mDisposition);
@@ -155,11 +162,17 @@ bool MWDialogue::Filter::testDisposition (const ESM::DialInfo& info, bool invert
 bool MWDialogue::Filter::testSelectStruct (const SelectWrapper& select) const
 {
     if (select.isNpcOnly() && (mActor.getTypeName() != typeid (ESM::NPC).name()))
-        // If the actor is a creature, we do not test the conditions applicable
-        // only to NPCs. Such conditions can never be satisfied, apart
-        // inverted ones (NotClass, NotRace, NotFaction return true
-        // because creatures are not of any race, class or faction).
-        return select.getType() == SelectWrapper::Type_Inverted;
+        // If the actor is a creature, we pass all conditions only applicable to NPCs.
+        return true;
+
+    if (select.getFunction() == SelectWrapper::Function_Choice && mChoice == -1)
+        // If not currently in a choice, we reject all conditions that test against choices.
+        return false;
+
+    if (select.getFunction() == SelectWrapper::Function_Weather && !(MWBase::Environment::get().getWorld()->isCellExterior() || MWBase::Environment::get().getWorld()->isCellQuasiExterior()))
+        // Reject weather conditions in interior cells
+        // Note that the original engine doesn't include the "|| isCellQuasiExterior()" check, which could be considered a bug.
+        return false;
 
     switch (select.getType())
     {
@@ -220,7 +233,7 @@ bool MWDialogue::Filter::testSelectStructNumeric (const SelectWrapper& select) c
 
         case SelectWrapper::Function_PcHealthPercent:
         {
-            MWWorld::Ptr player = MWBase::Environment::get().getWorld()->getPlayerPtr();
+            MWWorld::Ptr player = MWMechanics::getPlayer();
 
             float ratio = player.getClass().getCreatureStats (player).getHealth().getCurrent() /
                 player.getClass().getCreatureStats (player).getHealth().getModified();
@@ -230,7 +243,7 @@ bool MWDialogue::Filter::testSelectStructNumeric (const SelectWrapper& select) c
 
         case SelectWrapper::Function_PcDynamicStat:
         {
-            MWWorld::Ptr player = MWBase::Environment::get().getWorld()->getPlayerPtr();
+            MWWorld::Ptr player = MWMechanics::getPlayer();
 
             float value = player.getClass().getCreatureStats (player).
                 getDynamic (select.getArgument()).getCurrent();
@@ -254,7 +267,7 @@ bool MWDialogue::Filter::testSelectStructNumeric (const SelectWrapper& select) c
 
 int MWDialogue::Filter::getSelectStructInteger (const SelectWrapper& select) const
 {
-    MWWorld::Ptr player = MWBase::Environment::get().getWorld()->getPlayerPtr();
+    MWWorld::Ptr player = MWMechanics::getPlayer();
 
     switch (select.getFunction())
     {
@@ -313,7 +326,7 @@ int MWDialogue::Filter::getSelectStructInteger (const SelectWrapper& select) con
 
             int value = 0;
 
-            for (int i=0; i<=15; ++i) // everything except thigns held in hands and amunition
+            for (int i=0; i<=15; ++i) // everything except things held in hands and ammunition
             {
                 MWWorld::ContainerStoreIterator slot = store.getSlot (i);
 
@@ -430,7 +443,7 @@ int MWDialogue::Filter::getSelectStructInteger (const SelectWrapper& select) con
 
 bool MWDialogue::Filter::getSelectStructBoolean (const SelectWrapper& select) const
 {
-    MWWorld::Ptr player = MWBase::Environment::get().getWorld()->getPlayerPtr();
+    MWWorld::Ptr player = MWMechanics::getPlayer();
 
     switch (select.getFunction())
     {
@@ -440,7 +453,7 @@ bool MWDialogue::Filter::getSelectStructBoolean (const SelectWrapper& select) co
 
         case SelectWrapper::Function_NotId:
 
-            return !Misc::StringUtils::ciEqual(mActor.getClass().getId (mActor), select.getName());
+            return !Misc::StringUtils::ciEqual(mActor.getCellRef().getRefId(), select.getName());
 
         case SelectWrapper::Function_NotFaction:
 
@@ -480,7 +493,7 @@ bool MWDialogue::Filter::getSelectStructBoolean (const SelectWrapper& select) co
 
         case SelectWrapper::Function_SameRace:
 
-            return !Misc::StringUtils::ciEqual(mActor.get<ESM::NPC>()->mBase->mRace, player.get<ESM::NPC>()->mBase->mRace);
+            return Misc::StringUtils::ciEqual(mActor.get<ESM::NPC>()->mBase->mRace, player.get<ESM::NPC>()->mBase->mRace);
 
         case SelectWrapper::Function_SameFaction:
 
@@ -533,7 +546,7 @@ bool MWDialogue::Filter::getSelectStructBoolean (const SelectWrapper& select) co
         case SelectWrapper::Function_ShouldAttack:
 
             return MWBase::Environment::get().getMechanicsManager()->isAggressive(mActor,
-                    MWBase::Environment::get().getWorld()->getPlayerPtr());
+                    MWMechanics::getPlayer());
 
         case SelectWrapper::Function_Werewolf:
 

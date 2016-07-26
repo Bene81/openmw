@@ -29,29 +29,67 @@
 namespace Nif
 {
 
-typedef Node Effect;
-
-// Used for NiAmbientLight and NiDirectionalLight. Might also work for
-// NiPointLight and NiSpotLight?
-struct NiLight : Effect
+struct NiDynamicEffect : public Node
 {
-    struct SLight
+    void read(NIFStream *nif)
     {
-        float dimmer;
-        osg::Vec3f ambient;
-        osg::Vec3f diffuse;
-        osg::Vec3f specular;
+        Node::read(nif);
+        unsigned int numAffectedNodes = nif->getUInt();
+        for (unsigned int i=0; i<numAffectedNodes; ++i)
+            nif->getUInt(); // ref to another Node
+    }
+};
 
-        void read(NIFStream *nif);
-    };
-    SLight light;
+// Used as base for NiAmbientLight, NiDirectionalLight, NiPointLight and NiSpotLight.
+struct NiLight : NiDynamicEffect
+{
+    float dimmer;
+    osg::Vec3f ambient;
+    osg::Vec3f diffuse;
+    osg::Vec3f specular;
 
     void read(NIFStream *nif);
 };
 
-struct NiTextureEffect : Effect
+struct NiPointLight : public NiLight
+{
+    float constantAttenuation;
+    float linearAttenuation;
+    float quadraticAttenuation;
+
+    void read(NIFStream *nif);
+};
+
+struct NiSpotLight : public NiPointLight
+{
+    float cutoff;
+    float exponent;
+    void read(NIFStream *nif);
+};
+
+struct NiTextureEffect : NiDynamicEffect
 {
     NiSourceTexturePtr texture;
+    unsigned int clamp;
+
+    enum TextureType
+    {
+        Projected_Light = 0,
+        Projected_Shadow = 1,
+        Environment_Map = 2,
+        Fog_Map = 3
+    };
+    TextureType textureType;
+
+    enum CoordGenType
+    {
+        World_Parallel = 0,
+        World_Perspective,
+        Sphere_Map,
+        Specular_Cube_Map,
+        Diffuse_Cube_Map
+    };
+    CoordGenType coordGenType;
 
     void read(NIFStream *nif);
     void post(NIFFile *nif);

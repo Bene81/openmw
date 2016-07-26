@@ -54,7 +54,7 @@ namespace
                 *(image->data(x,y)+2) = *it++;
                 *(image->data(x,y)+1) = *it++;
                 *image->data(x,y) = *it++;
-                it++; // skip alpha
+                ++it; // skip alpha
             }
         }
 
@@ -322,14 +322,14 @@ namespace ESSImport
             ESM::NAME n = esm.getRecName();
             esm.getRecHeader();
 
-            std::map<unsigned int, boost::shared_ptr<Converter> >::iterator it = converters.find(n.val);
+            std::map<unsigned int, boost::shared_ptr<Converter> >::iterator it = converters.find(n.intval);
             if (it != converters.end())
             {
                 it->second->read(esm);
             }
             else
             {
-                if (unknownRecords.insert(n.val).second)
+                if (unknownRecords.insert(n.intval).second)
                 {
                     std::ios::fmtflags f(std::cerr.flags());
                     std::cerr << "unknown record " << n.toString() << " (0x" << std::hex << esm.getFileOffset() << ")" << std::endl;
@@ -394,7 +394,7 @@ namespace ESSImport
         }
 
         writer.startRecord(ESM::REC_NPC_);
-        writer.writeHNString("NAME", "player");
+        context.mPlayerBase.mId = "player";
         context.mPlayerBase.save(writer);
         writer.endRecord(ESM::REC_NPC_);
 

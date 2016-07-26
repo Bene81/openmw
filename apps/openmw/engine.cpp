@@ -20,7 +20,7 @@
 #include <components/sdlutil/imagetosurface.hpp>
 
 #include <components/resource/resourcesystem.hpp>
-#include <components/resource/texturemanager.hpp>
+#include <components/resource/scenemanager.hpp>
 
 #include <components/compiler/extensions0.hpp>
 
@@ -66,20 +66,16 @@ namespace
 
 void OMW::Engine::executeLocalScripts()
 {
-    MWWorld::LocalScripts& localScripts = MWBase::Environment::get().getWorld()->getLocalScripts();
+    MWWorld::LocalScripts& localScripts = mEnvironment.getWorld()->getLocalScripts();
 
     localScripts.startIteration();
-
-    while (!localScripts.isFinished())
+    std::pair<std::string, MWWorld::Ptr> script;
+    while (localScripts.getNext(script))
     {
-        std::pair<std::string, MWWorld::Ptr> script = localScripts.getNext();
-
         MWScript::InterpreterContext interpreterContext (
             &script.second.getRefData().getLocals(), script.second);
-        MWBase::Environment::get().getScriptManager()->run (script.first, interpreterContext);
+        mEnvironment.getScriptManager()->run (script.first, interpreterContext);
     }
-
-    localScripts.setIgnore (MWWorld::Ptr());
 }
 
 void OMW::Engine::frame(float frametime)
@@ -90,85 +86,85 @@ void OMW::Engine::frame(float frametime)
         mEnvironment.setFrameDuration (frametime);
 
         // update input
-        MWBase::Environment::get().getInputManager()->update(frametime, false);
+        mEnvironment.getInputManager()->update(frametime, false);
 
-        // When the window is minimized, pause everything. Currently this *has* to be here to work around a MyGUI bug.
-        // If we are not currently rendering, then RenderItems will not be reused resulting in a memory leak upon changing widget textures.
-        //if (!mOgre->getWindow()->isActive() || !mOgre->getWindow()->isVisible())
-        //    return true;
+        // When the window is minimized, pause the game. Currently this *has* to be here to work around a MyGUI bug.
+        // If we are not currently rendering, then RenderItems will not be reused resulting in a memory leak upon changing widget textures (fixed in MyGUI 3.3.2),
+        // and destroyed widgets will not be deleted (not fixed yet, https://github.com/MyGUI/mygui/issues/21)
+        if (!mEnvironment.getInputManager()->isWindowVisible())
+            return;
 
         // sound
         if (mUseSound)
-            MWBase::Environment::get().getSoundManager()->update(frametime);
+            mEnvironment.getSoundManager()->update(frametime);
 
         // Main menu opened? Then scripts are also paused.
-        bool paused = MWBase::Environment::get().getWindowManager()->containsMode(MWGui::GM_MainMenu);
+        bool paused = mEnvironment.getWindowManager()->containsMode(MWGui::GM_MainMenu);
 
         // update game state
-        MWBase::Environment::get().getStateManager()->update (frametime);
+        mEnvironment.getStateManager()->update (frametime);
 
-        bool guiActive = MWBase::Environment::get().getWindowManager()->isGuiMode();
+        bool guiActive = mEnvironment.getWindowManager()->isGuiMode();
 
         osg::Timer_t beforeScriptTick = osg::Timer::instance()->tick();
-        if (MWBase::Environment::get().getStateManager()->getState()==
+        if (mEnvironment.getStateManager()->getState()==
             MWBase::StateManager::State_Running)
         {
             if (!paused)
             {
-                if (MWBase::Environment::get().getWorld()->getScriptsEnabled())
+                if (mEnvironment.getWorld()->getScriptsEnabled())
                 {
                     // local scripts
                     executeLocalScripts();
 
                     // global scripts
-                    MWBase::Environment::get().getScriptManager()->getGlobalScripts().run();
+                    mEnvironment.getScriptManager()->getGlobalScripts().run();
                 }
 
-                MWBase::Environment::get().getWorld()->markCellAsUnchanged();
+                mEnvironment.getWorld()->markCellAsUnchanged();
             }
 
             if (!guiActive)
-                MWBase::Environment::get().getWorld()->advanceTime(
-                    frametime*MWBase::Environment::get().getWorld()->getTimeScaleFactor()/3600);
+            {
+                double hours = (frametime * mEnvironment.getWorld()->getTimeScaleFactor()) / 3600.0;
+                mEnvironment.getWorld()->advanceTime(hours, true);
+            }
         }
         osg::Timer_t afterScriptTick = osg::Timer::instance()->tick();
 
         // update actors
         osg::Timer_t beforeMechanicsTick = osg::Timer::instance()->tick();
-        if (MWBase::Environment::get().getStateManager()->getState()!=
+        if (mEnvironment.getStateManager()->getState()!=
             MWBase::StateManager::State_NoGame)
         {
-            MWBase::Environment::get().getMechanicsManager()->update(frametime,
+            mEnvironment.getMechanicsManager()->update(frametime,
                 guiActive);
         }
         osg::Timer_t afterMechanicsTick = osg::Timer::instance()->tick();
 
-        if (MWBase::Environment::get().getStateManager()->getState()==
+        if (mEnvironment.getStateManager()->getState()==
             MWBase::StateManager::State_Running)
         {
             MWWorld::Ptr player = mEnvironment.getWorld()->getPlayerPtr();
             if(!guiActive && player.getClass().getCreatureStats(player).isDead())
-                MWBase::Environment::get().getStateManager()->endGame();
+                mEnvironment.getStateManager()->endGame();
         }
 
         // update world
         osg::Timer_t beforePhysicsTick = osg::Timer::instance()->tick();;
-        if (MWBase::Environment::get().getStateManager()->getState()!=
+        if (mEnvironment.getStateManager()->getState()!=
             MWBase::StateManager::State_NoGame)
         {
-            MWBase::Environment::get().getWorld()->update(frametime, guiActive);
+            mEnvironment.getWorld()->update(frametime, guiActive);
         }
         osg::Timer_t afterPhysicsTick = osg::Timer::instance()->tick();
 
         // update GUI
-        MWBase::Environment::get().getWindowManager()->onFrame(frametime);
-        if (MWBase::Environment::get().getStateManager()->getState()!=
+        mEnvironment.getWindowManager()->onFrame(frametime);
+        if (mEnvironment.getStateManager()->getState()!=
             MWBase::StateManager::State_NoGame)
         {
-#if 0
-            MWBase::Environment::get().getWindowManager()->wmUpdateFps(fps);
-#endif
-            MWBase::Environment::get().getWindowManager()->update();
+            mEnvironment.getWindowManager()->update();
         }
 
         int frameNumber = mViewer->getFrameStamp()->getFrameNumber();
@@ -298,8 +294,8 @@ void OMW::Engine::setSkipMenu (bool skipMenu, bool newGame)
 std::string OMW::Engine::loadSettings (Settings::Manager & settings)
 {
     // Create the settings manager and load default settings file
-    const std::string localdefault = mCfgMgr.getLocalPath().string() + "/settings-default.cfg";
-    const std::string globaldefault = mCfgMgr.getGlobalPath().string() + "/settings-default.cfg";
+    const std::string localdefault = (mCfgMgr.getLocalPath() / "settings-default.cfg").string();
+    const std::string globaldefault = (mCfgMgr.getGlobalPath() / "settings-default.cfg").string();
 
     // prefer local
     if (boost::filesystem::exists(localdefault))
@@ -310,7 +306,7 @@ std::string OMW::Engine::loadSettings (Settings::Manager & settings)
         throw std::runtime_error ("No default settings file found! Make sure the file \"settings-default.cfg\" was properly installed.");
 
     // load user settings if they exist
-    const std::string settingspath = mCfgMgr.getUserConfigPath().string() + "/settings.cfg";
+    const std::string settingspath = (mCfgMgr.getUserConfigPath() / "settings.cfg").string();
     if (boost::filesystem::exists(settingspath))
         settings.loadUser(settingspath);
 
@@ -425,7 +421,7 @@ void OMW::Engine::setWindowIcon()
     }
     osgDB::ReaderWriter::ReadResult result = reader->readImage(windowIconStream);
     if (!result.success())
-        std::cerr << "Failed to read " << windowIcon << ": " << result.message() << std::endl;
+        std::cerr << "Failed to read " << windowIcon << ": " << result.message() << " code " << result.status() << std::endl;
     else
     {
         osg::ref_ptr<osg::Image> image = result.getImage();
@@ -450,13 +446,13 @@ void OMW::Engine::prepareEngine (Settings::Manager & settings)
     VFS::registerArchives(mVFS.get(), mFileCollections, mArchives, true);
 
     mResourceSystem.reset(new Resource::ResourceSystem(mVFS.get()));
-    mResourceSystem->getTextureManager()->setUnRefImageDataAfterApply(true);
-    osg::Texture::FilterMode min = osg::Texture::LINEAR_MIPMAP_NEAREST;
-    osg::Texture::FilterMode mag = osg::Texture::LINEAR;
-    if (Settings::Manager::getString("texture filtering", "General") == "trilinear")
-        min = osg::Texture::LINEAR_MIPMAP_LINEAR;
-    int maxAnisotropy = Settings::Manager::getInt("anisotropy", "General");
-    mResourceSystem->getTextureManager()->setFilterSettings(min, mag, maxAnisotropy);
+    mResourceSystem->getSceneManager()->setUnRefImageDataAfterApply(false); // keep to Off for now to allow better state sharing
+    mResourceSystem->getSceneManager()->setFilterSettings(
+        Settings::Manager::getString("texture mag filter", "General"),
+        Settings::Manager::getString("texture min filter", "General"),
+        Settings::Manager::getString("texture mipmap", "General"),
+        Settings::Manager::getInt("anisotropy", "General")
+    );
 
     // Create input and UI first to set up a bootstrapping environment for
     // showing a loading screen and keeping the window responsive while doing so
@@ -473,8 +469,8 @@ void OMW::Engine::prepareEngine (Settings::Manager & settings)
     }
 
     // find correct path to the game controller bindings
-    const std::string localdefault = mCfgMgr.getLocalPath().string() + "/gamecontrollerdb.cfg";
-    const std::string globaldefault = mCfgMgr.getGlobalPath().string() + "/gamecontrollerdb.cfg";
+    const std::string localdefault = mCfgMgr.getLocalPath().string() + "/gamecontrollerdb.txt";
+    const std::string globaldefault = mCfgMgr.getGlobalPath().string() + "/gamecontrollerdb.txt";
     std::string gameControllerdb;
     if (boost::filesystem::exists(localdefault))
         gameControllerdb = localdefault;
@@ -483,8 +479,7 @@ void OMW::Engine::prepareEngine (Settings::Manager & settings)
     else
         gameControllerdb = ""; //if it doesn't exist, pass in an empty string
 
-    // FIXME: shouldn't depend on Engine
-    MWInput::InputManager* input = new MWInput::InputManager (mWindow, mViewer, *this, keybinderUser, keybinderUserExists, gameControllerdb, mGrab);
+    MWInput::InputManager* input = new MWInput::InputManager (mWindow, mViewer, mScreenCaptureHandler, keybinderUser, keybinderUserExists, gameControllerdb, mGrab);
     mEnvironment.setInputManager (input);
 
     std::string myguiResources = (mResDir / "mygui").string();
@@ -510,10 +505,11 @@ void OMW::Engine::prepareEngine (Settings::Manager & settings)
     // Create the world
     mEnvironment.setWorld( new MWWorld::World (mViewer, rootNode, mResourceSystem.get(),
         mFileCollections, mContentFiles, mEncoder, mFallbackMap,
-        mActivationDistanceOverride, mCellName, mStartupScript));
-    MWBase::Environment::get().getWorld()->setupPlayer();
+        mActivationDistanceOverride, mCellName, mStartupScript, mResDir.string()));
+    mEnvironment.getWorld()->setupPlayer();
     input->setPlayer(&mEnvironment.getWorld()->getPlayer());
 
+    window->setStore(mEnvironment.getWorld()->getStore());
     window->initUI();
     window->renderWorldMap();
 
@@ -528,7 +524,7 @@ void OMW::Engine::prepareEngine (Settings::Manager & settings)
     mScriptContext = new MWScript::CompilerContext (MWScript::CompilerContext::Type_Full);
     mScriptContext->setExtensions (&mExtensions);
 
-    mEnvironment.setScriptManager (new MWScript::ScriptManager (MWBase::Environment::get().getWorld()->getStore(),
+    mEnvironment.setScriptManager (new MWScript::ScriptManager (mEnvironment.getWorld()->getStore(),
         mVerboseScripts, *mScriptContext, mWarningsMode,
         mScriptBlacklistUse ? mScriptBlacklist : std::vector<std::string>()));
 
@@ -543,7 +539,7 @@ void OMW::Engine::prepareEngine (Settings::Manager & settings)
     // scripts
     if (mCompileAll)
     {
-        std::pair<int, int> result = MWBase::Environment::get().getScriptManager()->compileAll();
+        std::pair<int, int> result = mEnvironment.getScriptManager()->compileAll();
         if (result.first)
             std::cout
                 << "compiled " << result.second << " of " << result.first << " scripts ("
@@ -602,7 +598,7 @@ public:
         osgDB::ReaderWriter::WriteResult result = readerwriter->writeImage(image, outStream);
         if (!result.success())
         {
-            std::cerr << "Can't write screenshot: " << result.message() << std::endl;
+            std::cerr << "Can't write screenshot: " << result.message() << " code " << result.status() << std::endl;
         }
     }
 
@@ -648,38 +644,41 @@ void OMW::Engine::go()
 
     if (!mSaveGameFile.empty())
     {
-        MWBase::Environment::get().getStateManager()->loadGame(mSaveGameFile);
+        mEnvironment.getStateManager()->loadGame(mSaveGameFile);
     }
     else if (!mSkipMenu)
     {
+        mEnvironment.getWorld()->preloadCommonAssets();
+
         // start in main menu
-        MWBase::Environment::get().getWindowManager()->pushGuiMode (MWGui::GM_MainMenu);
+        mEnvironment.getWindowManager()->pushGuiMode (MWGui::GM_MainMenu);
         try
         {
             // Is there an ini setting for this filename or something?
-            MWBase::Environment::get().getSoundManager()->streamMusic("Special/morrowind title.mp3");
+            mEnvironment.getSoundManager()->streamMusic("Special/morrowind title.mp3");
 
             std::string logo = mFallbackMap["Movies_Morrowind_Logo"];
             if (!logo.empty())
-                MWBase::Environment::get().getWindowManager()->playVideo(logo, true);
+                mEnvironment.getWindowManager()->playVideo(logo, true);
         }
         catch (...) {}
     }
     else
     {
-        MWBase::Environment::get().getStateManager()->newGame (!mNewGame);
+        mEnvironment.getStateManager()->newGame (!mNewGame);
     }
 
     // Start the main rendering loop
     osg::Timer frameTimer;
     double simulationTime = 0.0;
-    while (!mViewer->done() && !MWBase::Environment::get().getStateManager()->hasQuitRequest())
+    float framerateLimit = Settings::Manager::getFloat("framerate limit", "Video");
+    while (!mViewer->done() && !mEnvironment.getStateManager()->hasQuitRequest())
     {
         double dt = frameTimer.time_s();
         frameTimer.setStartTick();
         dt = std::min(dt, 0.2);
 
-        bool guiActive = MWBase::Environment::get().getWindowManager()->isGuiMode();
+        bool guiActive = mEnvironment.getWindowManager()->isGuiMode();
         if (!guiActive)
             simulationTime += dt;
 
@@ -687,50 +686,33 @@ void OMW::Engine::go()
 
         frame(dt);
 
-        mViewer->eventTraversal();
-        mViewer->updateTraversal();
-        mViewer->renderingTraversals();
+        if (!mEnvironment.getInputManager()->isWindowVisible())
+        {
+            OpenThreads::Thread::microSleep(5000);
+            continue;
+        }
+        else
+        {
+            mViewer->eventTraversal();
+            mViewer->updateTraversal();
+            mViewer->renderingTraversals();
+        }
+
+        if (framerateLimit > 0.f)
+        {
+            double thisFrameTime = frameTimer.time_s();
+            double minFrameTime = 1.0 / framerateLimit;
+            if (thisFrameTime < minFrameTime)
+            {
+                OpenThreads::Thread::microSleep(1000*1000*(minFrameTime-thisFrameTime));
+            }
+        }
     }
 
     // Save user settings
     settings.saveUser(settingspath);
 
     std::cout << "Quitting peacefully." << std::endl;
-}
-
-void OMW::Engine::activate()
-{
-    if (MWBase::Environment::get().getWindowManager()->isGuiMode())
-        return;
-
-    MWWorld::Ptr player = MWBase::Environment::get().getWorld()->getPlayerPtr();
-    if (player.getClass().getCreatureStats(player).getMagicEffects().get(ESM::MagicEffect::Paralyze).getMagnitude() > 0
-            || player.getClass().getCreatureStats(player).getKnockedDown())
-        return;
-
-    MWWorld::Ptr ptr = MWBase::Environment::get().getWorld()->getFacedObject();
-
-    if (ptr.isEmpty())
-        return;
-
-    if (ptr.getClass().getName(ptr) == "") // objects without name presented to user can never be activated
-        return;
-
-    if (ptr.getClass().isActor())
-    {
-        MWMechanics::CreatureStats &stats = ptr.getClass().getCreatureStats(ptr);
-
-        if (stats.getAiSequence().isInCombat() && !stats.isDead())
-            return;
-    }
-
-    MWBase::Environment::get().getWorld()->activate(ptr, MWBase::Environment::get().getWorld()->getPlayerPtr());
-}
-
-void OMW::Engine::screenshot()
-{
-    mScreenCaptureHandler->setFramesToCapture(1);
-    mScreenCaptureHandler->captureNextFrame(*mViewer);
 }
 
 void OMW::Engine::setCompileAll (bool all)

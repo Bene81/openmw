@@ -6,11 +6,13 @@
 #include "../mwworld/class.hpp"
 #include "../mwworld/containerstore.hpp"
 #include "../mwworld/esmstore.hpp"
+
 #include "../mwbase/mechanicsmanager.hpp"
 
 #include "creaturestats.hpp"
 #include "npcstats.hpp"
 #include "spellcasting.hpp"
+#include "actorutil.hpp"
 
 namespace MWMechanics
 {
@@ -54,7 +56,7 @@ namespace MWMechanics
 
     bool Enchanting::create()
     {
-        const MWWorld::Ptr& player = MWBase::Environment::get().getWorld()->getPlayerPtr();
+        const MWWorld::Ptr& player = getPlayer();
         MWWorld::ContainerStore& store = player.getClass().getContainerStore(player);
         ESM::Enchantment enchantment;
         enchantment.mData.mCharge = getGemCharge();
@@ -217,7 +219,7 @@ namespace MWMechanics
     int Enchanting::getEffectiveCastCost() const
     {
         int baseCost = getBaseCastCost();
-        MWWorld::Ptr player = MWBase::Environment::get().getWorld()->getPlayerPtr();
+        MWWorld::Ptr player = getPlayer();
         return getEffectiveEnchantmentCastCost(static_cast<float>(baseCost), player);
     }
 
@@ -291,7 +293,7 @@ namespace MWMechanics
 
     void Enchanting::payForEnchantment() const
     {
-        const MWWorld::Ptr& player = MWBase::Environment::get().getWorld()->getPlayerPtr();
+        const MWWorld::Ptr& player = getPlayer();
         MWWorld::ContainerStore& store = player.getClass().getContainerStore(player);
 
         store.remove(MWWorld::ContainerStore::sGoldId, getEnchantPrice(), player);

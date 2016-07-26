@@ -28,20 +28,11 @@ namespace MWGui
             // graphics
             MyGUI::ListBox* mResolutionList;
             MyGUI::Button* mFullscreenButton;
-            MyGUI::Button* mVSyncButton;
             MyGUI::Button* mWindowBorderButton;
-            MyGUI::Button* mFPSButton;
-            MyGUI::ScrollBar* mFOVSlider;
-            MyGUI::ScrollBar* mDifficultySlider;
-            MyGUI::ScrollBar* mAnisotropySlider;
             MyGUI::ComboBox* mTextureFilteringButton;
-            MyGUI::TextBox* mAnisotropyLabel;
             MyGUI::Widget* mAnisotropyBox;
-            MyGUI::Button* mShadersButton;
-            MyGUI::Button* mRefractionButton;
 
-            MyGUI::Button* mShadowsEnabledButton;
-            MyGUI::ComboBox* mShadowsTextureSize;
+            MyGUI::ComboBox* mWaterTextureSize;
 
             // controls
             MyGUI::ScrollView* mControlsBox;
@@ -52,7 +43,6 @@ namespace MWGui
 
             void onTabChanged(MyGUI::TabControl* _sender, size_t index);
             void onOkButtonClicked(MyGUI::Widget* _sender);
-            void onFpsToggled(MyGUI::Widget* _sender);
             void onTextureFilteringChanged(MyGUI::ComboBox* _sender, size_t pos);
             void onSliderChangePosition(MyGUI::ScrollBar* scroller, size_t pos);
             void onButtonToggled(MyGUI::Widget* _sender);
@@ -61,7 +51,7 @@ namespace MWGui
             void onResolutionCancel();
             void highlightCurrentResolution();
 
-            void onShadowTextureSizeChanged(MyGUI::ComboBox* _sender, size_t pos);
+            void onWaterTextureSizeChanged(MyGUI::ComboBox* _sender, size_t pos);
 
             void onRebindAction(MyGUI::Widget* _sender);
             void onInputTabMouseWheel(MyGUI::Widget* _sender, int _rel);
@@ -75,6 +65,7 @@ namespace MWGui
             void apply();
 
             void configureWidgets(MyGUI::Widget* widget);
+            void updateSliderLabel(MyGUI::ScrollBar* scroller, const std::string& value);
         
         private:
             void resetScrollbars();

@@ -3,7 +3,6 @@
 #include <stdexcept>
 
 #include <osg/NodeVisitor>
-#include <osg/Geode>
 
 #include <osgUtil/CullVisitor>
 
@@ -45,17 +44,32 @@ namespace SceneUtil
 
         virtual void apply(osg::State& state) const
         {
+            if (mLights.empty())
+                return;
             osg::Matrix modelViewMatrix = state.getModelViewMatrix();
 
             state.applyModelViewMatrix(state.getInitialViewMatrix());
 
             for (unsigned int i=0; i<mLights.size(); ++i)
-            {
-                mLights[i]->setLightNum(i+mIndex);
-                mLights[i]->apply(state);
-            }
+                applyLight((GLenum)((int)GL_LIGHT0 + i + mIndex), mLights[i].get());
 
             state.applyModelViewMatrix(modelViewMatrix);
+        }
+
+        void applyLight(GLenum lightNum, const osg::Light* light) const
+        {
+            glLightfv( lightNum, GL_AMBIENT,               light->getAmbient().ptr() );
+            glLightfv( lightNum, GL_DIFFUSE,               light->getDiffuse().ptr() );
+            glLightfv( lightNum, GL_SPECULAR,              light->getSpecular().ptr() );
+            glLightfv( lightNum, GL_POSITION,              light->getPosition().ptr() );
+            // TODO: enable this once spot lights are supported
+            // need to transform SPOT_DIRECTION by the world matrix?
+            //glLightfv( lightNum, GL_SPOT_DIRECTION,        light->getDirection().ptr() );
+            //glLightf ( lightNum, GL_SPOT_EXPONENT,         light->getSpotExponent() );
+            //glLightf ( lightNum, GL_SPOT_CUTOFF,           light->getSpotCutoff() );
+            glLightf ( lightNum, GL_CONSTANT_ATTENUATION,  light->getConstantAttenuation() );
+            glLightf ( lightNum, GL_LINEAR_ATTENUATION,    light->getLinearAttenuation() );
+            glLightf ( lightNum, GL_QUADRATIC_ATTENUATION, light->getQuadraticAttenuation() );
         }
 
     private:
@@ -63,6 +77,16 @@ namespace SceneUtil
 
         std::vector<osg::ref_ptr<osg::Light> > mLights;
     };
+
+    LightManager* findLightManager(const osg::NodePath& path)
+    {
+        for (unsigned int i=0;i<path.size(); ++i)
+        {
+            if (LightManager* lightManager = dynamic_cast<LightManager*>(path[i]))
+                return lightManager;
+        }
+        return NULL;
+    }
 
     // Set on a LightSource. Adds the light source to its light manager for the current frame.
     // This allows us to keep track of the current lights in the scene graph without tying creation & destruction to the manager.
@@ -82,19 +106,13 @@ namespace SceneUtil
         {
             if (!mLightManager)
             {
-                for (unsigned int i=0;i<nv->getNodePath().size(); ++i)
-                {
-                    if (LightManager* lightManager = dynamic_cast<LightManager*>(nv->getNodePath()[i]))
-                    {
-                        mLightManager = lightManager;
-                        break;
-                    }
-                }
+                mLightManager = findLightManager(nv->getNodePath());
+
                 if (!mLightManager)
                     throw std::runtime_error("can't find parent LightManager");
             }
 
-            mLightManager->addLight(static_cast<LightSource*>(node), osg::computeLocalToWorld(nv->getNodePath()));
+            mLightManager->addLight(static_cast<LightSource*>(node), osg::computeLocalToWorld(nv->getNodePath()), nv->getTraversalNumber());
 
             traverse(node, nv);
         }
@@ -126,83 +144,91 @@ namespace SceneUtil
     };
 
     LightManager::LightManager()
-        : mLightsInViewSpace(false)
-        , mStartLight(0)
+        : mStartLight(0)
+        , mLightingMask(~0u)
     {
         setUpdateCallback(new LightManagerUpdateCallback);
     }
 
     LightManager::LightManager(const LightManager &copy, const osg::CopyOp &copyop)
         : osg::Group(copy, copyop)
-        , mLightsInViewSpace(false)
         , mStartLight(copy.mStartLight)
+        , mLightingMask(copy.mLightingMask)
     {
 
+    }
+
+    void LightManager::setLightingMask(unsigned int mask)
+    {
+        mLightingMask = mask;
+    }
+
+    unsigned int LightManager::getLightingMask() const
+    {
+        return mLightingMask;
     }
 
     void LightManager::update()
     {
-        mLightsInViewSpace = false;
         mLights.clear();
+        mLightsInViewSpace.clear();
 
         // do an occasional cleanup for orphaned lights
-        if (mStateSetCache.size() > 5000)
-            mStateSetCache.clear();
+        for (int i=0; i<2; ++i)
+        {
+            if (mStateSetCache[i].size() > 5000)
+                mStateSetCache[i].clear();
+        }
     }
 
-    void LightManager::addLight(LightSource* lightSource, osg::Matrix worldMat)
+    void LightManager::addLight(LightSource* lightSource, const osg::Matrixf& worldMat, unsigned int frameNum)
     {
         LightSourceTransform l;
         l.mLightSource = lightSource;
         l.mWorldMatrix = worldMat;
-        lightSource->getLight()->setPosition(osg::Vec4f(worldMat.getTrans().x(),
+        lightSource->getLight(frameNum)->setPosition(osg::Vec4f(worldMat.getTrans().x(),
                                                         worldMat.getTrans().y(),
                                                         worldMat.getTrans().z(), 1.f));
         mLights.push_back(l);
     }
 
-    void LightManager::prepareForCamera(osg::Camera *cam)
-    {
-        // later on we need to store this per camera
-        if (!mLightsInViewSpace)
-        {
-            for (std::vector<LightSourceTransform>::iterator it = mLights.begin(); it != mLights.end(); ++it)
-            {
-                LightSourceTransform& l = *it;
-                osg::Matrix worldViewMat = l.mWorldMatrix * cam->getViewMatrix();
-                l.mViewBound = osg::BoundingSphere(osg::Vec3f(0,0,0), l.mLightSource->getRadius());
-                transformBoundingSphere(worldViewMat, l.mViewBound);
-            }
-            mLightsInViewSpace = true;
-        }
-    }
-
-    osg::ref_ptr<osg::StateSet> LightManager::getLightListStateSet(const LightList &lightList)
+    osg::ref_ptr<osg::StateSet> LightManager::getLightListStateSet(const LightList &lightList, unsigned int frameNum)
     {
         // possible optimization: return a StateSet containing all requested lights plus some extra lights (if a suitable one exists)
         size_t hash = 0;
         for (unsigned int i=0; i<lightList.size();++i)
             boost::hash_combine(hash, lightList[i]->mLightSource->getId());
 
-        LightStateSetMap::iterator found = mStateSetCache.find(hash);
-        if (found != mStateSetCache.end())
+        LightStateSetMap& stateSetCache = mStateSetCache[frameNum%2];
+
+        LightStateSetMap::iterator found = stateSetCache.find(hash);
+        if (found != stateSetCache.end())
             return found->second;
         else
         {
-
+            osg::ref_ptr<osg::StateSet> stateset = new osg::StateSet;
             std::vector<osg::ref_ptr<osg::Light> > lights;
             for (unsigned int i=0; i<lightList.size();++i)
-                lights.push_back(lightList[i]->mLightSource->getLight());
+            {
+                lights.push_back(lightList[i]->mLightSource->getLight(frameNum));
+            }
 
+            // the first light state attribute handles the actual state setting for all lights
+            // it's best to batch these up so that we don't need to touch the modelView matrix more than necessary
             osg::ref_ptr<LightStateAttribute> attr = new LightStateAttribute(mStartLight, lights);
-
-            osg::ref_ptr<osg::StateSet> stateset = new osg::StateSet;
-
             // don't use setAttributeAndModes, that does not support light indices!
             stateset->setAttribute(attr, osg::StateAttribute::ON);
             stateset->setAssociatedModes(attr, osg::StateAttribute::ON);
 
-            mStateSetCache.insert(std::make_pair(hash, stateset));
+            // need to push some dummy attributes to ensure proper state tracking
+            // lights need to reset to their default when the StateSet is popped
+            for (unsigned int i=1; i<lightList.size(); ++i)
+            {
+                osg::ref_ptr<LightStateAttribute> dummy = new LightStateAttribute(mStartLight+i, std::vector<osg::ref_ptr<osg::Light> >());
+                stateset->setAttribute(dummy, osg::StateAttribute::ON);
+            }
+
+            stateSetCache.insert(std::make_pair(hash, stateset));
             return stateset;
         }
     }
@@ -212,9 +238,44 @@ namespace SceneUtil
         return mLights;
     }
 
+    const std::vector<LightManager::LightSourceViewBound>& LightManager::getLightsInViewSpace(osg::Camera *camera, const osg::RefMatrix* viewMatrix)
+    {
+        osg::observer_ptr<osg::Camera> camPtr (camera);
+        std::map<osg::observer_ptr<osg::Camera>, LightSourceViewBoundCollection>::iterator it = mLightsInViewSpace.find(camPtr);
+
+        if (it == mLightsInViewSpace.end())
+        {
+            it = mLightsInViewSpace.insert(std::make_pair(camPtr, LightSourceViewBoundCollection())).first;
+
+            for (std::vector<LightSourceTransform>::iterator lightIt = mLights.begin(); lightIt != mLights.end(); ++lightIt)
+            {
+                osg::Matrixf worldViewMat = lightIt->mWorldMatrix * (*viewMatrix);
+                osg::BoundingSphere viewBound = osg::BoundingSphere(osg::Vec3f(0,0,0), lightIt->mLightSource->getRadius());
+                transformBoundingSphere(worldViewMat, viewBound);
+
+                LightSourceViewBound l;
+                l.mLightSource = lightIt->mLightSource;
+                l.mViewBound = viewBound;
+                it->second.push_back(l);
+            }
+        }
+        return it->second;
+    }
+
     void LightManager::setStartLight(int start)
     {
         mStartLight = start;
+
+        // Set default light state to zero
+        for (int i=start; i<8; ++i)
+        {
+            osg::ref_ptr<osg::Light> defaultLight (new osg::Light(i));
+            defaultLight->setAmbient(osg::Vec4());
+            defaultLight->setDiffuse(osg::Vec4());
+            defaultLight->setSpecular(osg::Vec4());
+            defaultLight->setConstantAttenuation(0.f);
+            getOrCreateStateSet()->setAttributeAndModes(defaultLight, osg::StateAttribute::OFF);
+        }
     }
 
     int LightManager::getStartLight() const
@@ -227,21 +288,22 @@ namespace SceneUtil
     LightSource::LightSource()
         : mRadius(0.f)
     {
-        setNodeMask(Mask_Lit);
         setUpdateCallback(new CollectLightCallback);
         mId = sLightId++;
     }
 
     LightSource::LightSource(const LightSource &copy, const osg::CopyOp &copyop)
         : osg::Node(copy, copyop)
-        , mLight(copy.mLight)
         , mRadius(copy.mRadius)
     {
         mId = sLightId++;
+
+        for (int i=0; i<2; ++i)
+            mLight[i] = osg::clone(copy.mLight[i].get(), copyop);
     }
 
 
-    bool sortLights (const LightManager::LightSourceTransform* left, const LightManager::LightSourceTransform* right)
+    bool sortLights (const LightManager::LightSourceViewBound* left, const LightManager::LightSourceViewBound* right)
     {
         return left->mViewBound.center().length2() - left->mViewBound.radius2()/4.f < right->mViewBound.center().length2() - right->mViewBound.radius2()/4.f;
     }
@@ -250,22 +312,9 @@ namespace SceneUtil
     {
         osgUtil::CullVisitor* cv = static_cast<osgUtil::CullVisitor*>(nv);
 
-        if (!(cv->getCurrentCamera()->getCullMask()&Mask_Lit))
-        {
-            traverse(node, nv);
-            return;
-        }
-
         if (!mLightManager)
         {
-            for (unsigned int i=0;i<nv->getNodePath().size(); ++i)
-            {
-                if (LightManager* lightManager = dynamic_cast<LightManager*>(nv->getNodePath()[i]))
-                {
-                    mLightManager = lightManager;
-                    break;
-                }
-            }
+            mLightManager = findLightManager(nv->getNodePath());
             if (!mLightManager)
             {
                 traverse(node, nv);
@@ -273,40 +322,57 @@ namespace SceneUtil
             }
         }
 
-        mLightManager->prepareForCamera(cv->getCurrentCamera());
+        if (!(cv->getCurrentCamera()->getCullMask() & mLightManager->getLightingMask()))
+        {
+            traverse(node, nv);
+            return;
+        }
 
         // Possible optimizations:
         // - cull list of lights by the camera frustum
         // - organize lights in a quad tree
 
-        const std::vector<LightManager::LightSourceTransform>& lights = mLightManager->getLights();
 
-        if (lights.size())
+        // update light list if necessary
+        // makes sure we don't update it more than once per frame when rendering with multiple cameras
+        if (mLastFrameNumber != nv->getTraversalNumber())
         {
-            // we do the intersections in view space
-            osg::BoundingSphere nodeBound = node->getBound();
+            mLastFrameNumber = nv->getTraversalNumber();
+
+            // Don't use Camera::getViewMatrix, that one might be relative to another camera!
+            const osg::RefMatrix* viewMatrix = cv->getCurrentRenderStage()->getInitialViewMatrix();
+            const std::vector<LightManager::LightSourceViewBound>& lights = mLightManager->getLightsInViewSpace(cv->getCurrentCamera(), viewMatrix);
+
+            // get the node bounds in view space
+            // NB do not node->getBound() * modelView, that would apply the node's transformation twice
+            osg::BoundingSphere nodeBound;
+            osg::Group* group = node->asGroup();
+            if (group)
+            {
+                for (unsigned int i=0; i<group->getNumChildren(); ++i)
+                    nodeBound.expandBy(group->getChild(i)->getBound());
+            }
             osg::Matrixf mat = *cv->getModelViewMatrix();
             transformBoundingSphere(mat, nodeBound);
 
-            std::vector<const LightManager::LightSourceTransform*> lightList;
+            mLightList.clear();
             for (unsigned int i=0; i<lights.size(); ++i)
             {
-                const LightManager::LightSourceTransform& l = lights[i];
+                const LightManager::LightSourceViewBound& l = lights[i];
                 if (l.mViewBound.intersects(nodeBound))
-                    lightList.push_back(&l);
+                    mLightList.push_back(&l);
             }
-
-            if (lightList.empty())
-            {
-                traverse(node, nv);
-                return;
-            }
-
+        }
+        if (!mLightList.empty())
+        {
             unsigned int maxLights = static_cast<unsigned int> (8 - mLightManager->getStartLight());
 
-            if (lightList.size() > maxLights)
+            osg::StateSet* stateset = NULL;
+
+            if (mLightList.size() > maxLights)
             {
                 // remove lights culled by this camera
+                LightManager::LightList lightList = mLightList;
                 for (LightManager::LightList::iterator it = lightList.begin(); it != lightList.end() && lightList.size() > maxLights; )
                 {
                     osg::CullStack::CullingStack& stack = cv->getModelViewCullingStack();
@@ -330,9 +396,11 @@ namespace SceneUtil
                     while (lightList.size() > maxLights)
                         lightList.pop_back();
                 }
+                stateset = mLightManager->getLightListStateSet(lightList, nv->getTraversalNumber());
             }
+            else
+                stateset = mLightManager->getLightListStateSet(mLightList, nv->getTraversalNumber());
 
-            osg::StateSet* stateset = mLightManager->getLightListStateSet(lightList);
 
             cv->pushStateSet(stateset);
 
@@ -342,30 +410,6 @@ namespace SceneUtil
         }
         else
             traverse(node, nv);
-    }
-
-    void configureLight(osg::Light *light, float radius, bool isExterior, bool outQuadInLin, bool useQuadratic,
-                        float quadraticValue, float quadraticRadiusMult, bool useLinear, float linearRadiusMult, float linearValue)
-    {
-        bool quadratic = useQuadratic && (!outQuadInLin || isExterior);
-
-        float quadraticAttenuation = 0;
-        float linearAttenuation = 0;
-        if (quadratic)
-        {
-            float r = radius * quadraticRadiusMult;
-            quadraticAttenuation = quadraticValue / std::pow(r, 2);
-        }
-        if (useLinear)
-        {
-            float r = radius * linearRadiusMult;
-            linearAttenuation = linearValue / r;
-        }
-
-        light->setLinearAttenuation(linearAttenuation);
-        light->setQuadraticAttenuation(quadraticAttenuation);
-        light->setConstantAttenuation(0.f);
-
     }
 
 }

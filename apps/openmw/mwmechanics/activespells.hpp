@@ -5,12 +5,12 @@
 #include <vector>
 #include <string>
 
+#include <components/esm/defs.hpp>
+#include <components/esm/activespells.hpp>
+
 #include "../mwworld/timestamp.hpp"
 
 #include "magiceffects.hpp"
-
-#include <components/esm/defs.hpp>
-#include <components/esm/activespells.hpp>
 
 namespace MWMechanics
 {
@@ -97,7 +97,7 @@ namespace MWMechanics
             /// Remove all spells
             void clear();
 
-            bool isSpellActive (std::string id) const;
+            bool isSpellActive (const std::string& id) const;
             ///< case insensitive
 
             const MagicEffects& getMagicEffects() const;

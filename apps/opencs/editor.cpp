@@ -1,4 +1,3 @@
-
 #include "editor.hpp"
 
 #include <QApplication>
@@ -9,6 +8,8 @@
 #include <components/vfs/manager.hpp>
 #include <components/vfs/registerarchives.hpp>
 
+#include <components/fallback/validate.hpp>
+
 #include <components/nifosg/nifloader.hpp>
 
 #include "model/doc/document.hpp"
@@ -18,17 +19,17 @@
 #include <Windows.h>
 #endif
 
+using namespace Fallback;
+
 CS::Editor::Editor ()
-: mUserSettings (mCfgMgr), mDocumentManager (mCfgMgr),
+: mSettingsState (mCfgMgr), mDocumentManager (mCfgMgr),
   mViewManager (mDocumentManager), mPid(""),
-  mLock(), mIpcServerName ("org.openmw.OpenCS"), mServer(NULL), mClientSocket(NULL)
+  mLock(), mMerge (mDocumentManager),
+  mIpcServerName ("org.openmw.OpenCS"), mServer(NULL), mClientSocket(NULL)
 {
     std::pair<Files::PathContainer, std::vector<std::string> > config = readConfig();
 
     setupDataFiles (config.first);
-
-    CSMSettings::UserSettings::instance().loadSettings ("opencs.ini");
-    mSettings.setModel (CSMSettings::UserSettings::instance());
 
     NifOsg::Loader::setShowMarkers(true);
 
@@ -40,9 +41,12 @@ CS::Editor::Editor ()
 
     mNewGame.setLocalData (mLocal);
     mFileDialog.setLocalData (mLocal);
+    mMerge.setLocalData (mLocal);
 
     connect (&mDocumentManager, SIGNAL (documentAdded (CSMDoc::Document *)),
         this, SLOT (documentAdded (CSMDoc::Document *)));
+    connect (&mDocumentManager, SIGNAL (documentAboutToBeRemoved (CSMDoc::Document *)),
+        this, SLOT (documentAboutToBeRemoved (CSMDoc::Document *)));
     connect (&mDocumentManager, SIGNAL (lastDocumentDeleted()),
         this, SLOT (lastDocumentDeleted()));
 
@@ -50,6 +54,7 @@ CS::Editor::Editor ()
     connect (&mViewManager, SIGNAL (newAddonRequest ()), this, SLOT (createAddon ()));
     connect (&mViewManager, SIGNAL (loadDocumentRequest ()), this, SLOT (loadDocument ()));
     connect (&mViewManager, SIGNAL (editSettingsRequest()), this, SLOT (showSettings ()));
+    connect (&mViewManager, SIGNAL (mergeDocument (CSMDoc::Document *)), this, SLOT (mergeDocument (CSMDoc::Document *)));
 
     connect (&mStartup, SIGNAL (createGame()), this, SLOT (createGame ()));
     connect (&mStartup, SIGNAL (createAddon()), this, SLOT (createAddon ()));
@@ -99,6 +104,8 @@ std::pair<Files::PathContainer, std::vector<std::string> > CS::Editor::readConfi
     ("resources", boost::program_options::value<std::string>()->default_value("resources"))
     ("fallback-archive", boost::program_options::value<std::vector<std::string> >()->
         default_value(std::vector<std::string>(), "fallback-archive")->multitoken())
+    ("fallback", boost::program_options::value<FallbackMap>()->default_value(FallbackMap(), "")
+        ->multitoken()->composing(), "fallback values")
     ("script-blacklist", boost::program_options::value<std::vector<std::string> >()->default_value(std::vector<std::string>(), "")
         ->multitoken(), "exclude specified script from the verifier (if the use of the blacklist is enabled)")
     ("script-blacklist-use", boost::program_options::value<bool>()->implicit_value(true)
@@ -112,6 +119,8 @@ std::pair<Files::PathContainer, std::vector<std::string> > CS::Editor::readConfi
         ToUTF8::calculateEncoding (variables["encoding"].as<std::string>()));
 
     mDocumentManager.setResourceDir (mResources = variables["resources"].as<std::string>());
+
+    mDocumentManager.setFallbackMap (variables["fallback"].as<FallbackMap>().mMap);
 
     if (variables["script-blacklist-use"].as<bool>())
         mDocumentManager.setBlacklistedScripts (
@@ -360,7 +369,21 @@ void CS::Editor::documentAdded (CSMDoc::Document *document)
     mViewManager.addView (document);
 }
 
+void CS::Editor::documentAboutToBeRemoved (CSMDoc::Document *document)
+{
+    if (mMerge.getDocument()==document)
+        mMerge.cancel();
+}
+
 void CS::Editor::lastDocumentDeleted()
 {
     QApplication::quit();
+}
+
+void CS::Editor::mergeDocument (CSMDoc::Document *document)
+{
+    mMerge.configure (document);
+    mMerge.show();
+    mMerge.raise();
+    mMerge.activateWindow();
 }

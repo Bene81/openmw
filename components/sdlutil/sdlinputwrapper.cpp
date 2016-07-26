@@ -33,6 +33,10 @@ InputWrapper::InputWrapper(SDL_Window* window, osg::ref_ptr<osgViewer::Viewer> v
         mMouseInWindow(true)
     {
         _setupOISKeys();
+
+        Uint32 flags = SDL_GetWindowFlags(mSDLWindow);
+        mWindowHasFocus = (flags & SDL_WINDOW_INPUT_FOCUS);
+        mMouseInWindow = (flags & SDL_WINDOW_MOUSE_FOCUS);
     }
 
     InputWrapper::~InputWrapper()
@@ -138,6 +142,16 @@ InputWrapper::InputWrapper(SDL_Window* window, osg::ref_ptr<osgViewer::Viewer> v
                     break;
                 case SDL_CLIPBOARDUPDATE:
                     break; // We don't need this event, clipboard is retrieved on demand
+
+                case SDL_FINGERDOWN:
+                case SDL_FINGERUP:
+                case SDL_FINGERMOTION:
+                case SDL_DOLLARGESTURE:
+                case SDL_DOLLARRECORD:
+                case SDL_MULTIGESTURE:
+                    // No use for touch & gesture events
+                    break;
+
                 default:
                     std::ios::fmtflags f(std::cerr.flags());
                     std::cerr << "Unhandled SDL event of type 0x" << std::hex << evt.type << std::endl;

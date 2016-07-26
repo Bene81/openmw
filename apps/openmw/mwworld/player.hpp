@@ -82,6 +82,9 @@ namespace MWWorld
         void setDrawState (MWMechanics::DrawState_ state);
         MWMechanics::DrawState_ getDrawState(); /// \todo constness
 
+        /// Activate the object under the crosshair, if any
+        void activate();
+
         bool getAutoMove() const;
         void setAutoMove (bool enable);
 
@@ -105,6 +108,8 @@ namespace MWWorld
 
         ///Checks all nearby actors to see if anyone has an aipackage against you
         bool isInCombat();
+
+        bool enemiesNearby();
 
         void clear();
 

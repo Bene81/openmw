@@ -4,13 +4,11 @@
 #include <osgParticle/Particle>
 #include <osgParticle/Shooter>
 #include <osgParticle/Operator>
-#include <osgParticle/ModularEmitter>
+#include <osgParticle/Emitter>
+#include <osgParticle/Placer>
+#include <osgParticle/Counter>
 
 #include <osg/NodeCallback>
-#include <osg/UserDataContainer>
-
-#include <components/nif/nifkey.hpp>
-#include <components/nif/data.hpp>
 
 #include "controller.hpp" // ValueInterpolator
 
@@ -18,6 +16,7 @@ namespace Nif
 {
     class NiGravity;
     class NiPlanarCollider;
+    class NiColorData;
 }
 
 namespace NifOsg
@@ -30,7 +29,7 @@ namespace NifOsg
         ParticleSystem();
         ParticleSystem(const ParticleSystem& copy, const osg::CopyOp& copyop);
 
-        META_Object(NifOsg, NifOsg::ParticleSystem)
+        META_Object(NifOsg, ParticleSystem)
 
         virtual osgParticle::Particle* createParticle(const osgParticle::Particle *ptemplate);
 
@@ -60,7 +59,7 @@ namespace NifOsg
         InverseWorldMatrix()
         {
         }
-        InverseWorldMatrix(const InverseWorldMatrix& copy, const osg::CopyOp& op = osg::CopyOp::SHALLOW_COPY)
+        InverseWorldMatrix(const InverseWorldMatrix& copy, const osg::CopyOp& op)
             : osg::Object(), osg::NodeCallback()
         {
         }
@@ -130,7 +129,8 @@ namespace NifOsg
         float mCachedDefaultSize;
     };
 
-    class ParticleColorAffector : public osgParticle::Operator, public ValueInterpolator
+    typedef ValueInterpolator<Nif::Vector4KeyMap, LerpFunc> Vec4Interpolator;
+    class ParticleColorAffector : public osgParticle::Operator
     {
     public:
         ParticleColorAffector(const Nif::NiColorData* clrdata);
@@ -139,13 +139,10 @@ namespace NifOsg
 
         META_Object(NifOsg, ParticleColorAffector)
 
-        // TODO: very similar to vec3 version, refactor to a template
-        osg::Vec4f interpolate(const float time, const Nif::Vector4KeyMap::MapType& keys);
-
         virtual void operate(osgParticle::Particle* particle, double dt);
 
     private:
-        Nif::NiColorData mData;
+        Vec4Interpolator mData;
     };
 
     class GravityAffector : public osgParticle::Operator
@@ -174,11 +171,12 @@ namespace NifOsg
         osg::Vec3f mCachedWorldDirection;
     };
 
-    // NodeVisitor to find a child node with the given record index, stored in the node's user data container.
-    class FindRecIndexVisitor : public osg::NodeVisitor
+    // NodeVisitor to find a Group node with the given record index, stored in the node's user data container.
+    // Alternatively, returns the node's parent Group if that node is not a Group (i.e. a leaf node).
+    class FindGroupByRecIndex : public osg::NodeVisitor
     {
     public:
-        FindRecIndexVisitor(int recIndex);
+        FindGroupByRecIndex(int recIndex);
 
         virtual void apply(osg::Node &searchNode);
 
@@ -196,7 +194,7 @@ namespace NifOsg
         Emitter();
         Emitter(const Emitter& copy, const osg::CopyOp& copyop);
 
-        META_Object(NifOsg, NifOsg::Emitter)
+        META_Object(NifOsg, Emitter)
 
         virtual void emitParticles(double dt);
 

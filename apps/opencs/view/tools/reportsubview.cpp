@@ -1,4 +1,3 @@
-
 #include "reportsubview.hpp"
 
 #include "reporttable.hpp"
@@ -28,11 +27,6 @@ void CSVTools::ReportSubView::setEditLock (bool locked)
     // ignored. We don't change document state anyway.
 }
 
-void CSVTools::ReportSubView::updateUserSetting (const QString &name, const QStringList &list)
-{
-    mTable->updateUserSetting (name, list);
-}
-
 void CSVTools::ReportSubView::refreshRequest()
 {
     if (!(mDocument.getState() & mRefreshState))
@@ -40,7 +34,7 @@ void CSVTools::ReportSubView::refreshRequest()
         if (mRefreshState==CSMDoc::State_Verifying)
         {
             mTable->clear();
-            mDocument.verify (getUniversalId());            
+            mDocument.verify (getUniversalId());
         }
     }
 }

@@ -23,6 +23,11 @@ namespace CSMWorld
     class IdTable;
 }
 
+namespace CSMPrefs
+{
+    class Setting;
+}
+
 namespace CSVWorld
 {
     class ScriptEdit;
@@ -38,6 +43,7 @@ namespace CSVWorld
             CSMDoc::Document& mDocument;
             CSMWorld::IdTable *mModel;
             int mColumn;
+            int mIdColumn;
             int mStateColumn;
             TableBottomBox *mBottom;
             RecordButtonBar *mButtons;
@@ -46,6 +52,7 @@ namespace CSVWorld
             QSplitter *mMain;
             ScriptErrorTable *mErrors;
             QTimer *mCompileDelay;
+            int mErrorHeight;
 
         private:
 
@@ -57,6 +64,8 @@ namespace CSVWorld
 
             void updateDeletedState();
 
+            void adjustSplitter();
+
         public:
 
             ScriptSubView (const CSMWorld::UniversalId& id, CSMDoc::Document& document);
@@ -64,8 +73,6 @@ namespace CSVWorld
             virtual void setEditLock (bool locked);
 
             virtual void useHint (const std::string& hint);
-
-            virtual void updateUserSetting (const QString& name, const QStringList& value);
 
             virtual void setStatusBar (bool show);
 
@@ -78,6 +85,8 @@ namespace CSVWorld
             void rowsAboutToBeRemoved (const QModelIndex& parent, int start, int end);
 
         private slots:
+
+            void settingChanged (const CSMPrefs::Setting *setting);
 
             void updateStatusBar();
 

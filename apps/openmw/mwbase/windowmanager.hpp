@@ -148,11 +148,12 @@ namespace MWBase
             virtual MWGui::ConfirmationDialog* getConfirmationDialog() = 0;
             virtual MWGui::TradeWindow* getTradeWindow() = 0;
 
+            /// Make the player use an item, while updating GUI state accordingly
+            virtual void useItem(const MWWorld::Ptr& item) = 0;
+
             virtual void updateSpellWindow() = 0;
 
             virtual void setConsoleSelectedObject(const MWWorld::Ptr& object) = 0;
-
-            virtual void wmUpdateFps(float fps) = 0;
 
             /// Set value for the given ID.
             virtual void setValue (const std::string& id, const MWMechanics::AttributeValue& value) = 0;
@@ -175,7 +176,7 @@ namespace MWBase
             virtual void updateSkillArea() = 0;
             ///< update display of skills, factions, birth sign, reputation and bounty
 
-            virtual void changeCell(MWWorld::CellStore* cell) = 0;
+            virtual void changeCell(const MWWorld::CellStore* cell) = 0;
             ///< change the active cell
 
             virtual void setFocusObject(const MWWorld::Ptr& focus) = 0;
@@ -352,8 +353,8 @@ namespace MWBase
             virtual std::string correctIconPath(const std::string& path) = 0;
             virtual std::string correctBookartPath(const std::string& path, int width, int height) = 0;
             virtual std::string correctTexturePath(const std::string& path) = 0;
+            virtual bool textureExists(const std::string& path) = 0;
 
-            virtual void requestMap(std::set<MWWorld::CellStore*> cells) = 0;
             virtual void removeCell(MWWorld::CellStore* cell) = 0;
             virtual void writeFog(MWWorld::CellStore* cell) = 0;
     };

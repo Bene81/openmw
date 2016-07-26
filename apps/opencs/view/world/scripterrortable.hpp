@@ -14,6 +14,11 @@ namespace CSMDoc
     class Document;
 }
 
+namespace CSMPrefs
+{
+    class Setting;
+}
+
 namespace CSVWorld
 {
     class ScriptErrorTable : public QTableWidget, private Compiler::ErrorHandler
@@ -32,19 +37,24 @@ namespace CSVWorld
             void addMessage (const std::string& message, CSMDoc::Message::Severity severity,
                 int line = -1, int column = -1);
 
-            void setWarningsMode (const QString& value);
+            void setWarningsMode (const std::string& value);
 
         public:
 
             ScriptErrorTable (const CSMDoc::Document& document, QWidget *parent = 0);
 
-            void updateUserSetting (const QString& name, const QStringList& value);
-
             void update (const std::string& source);
 
             void clear();
 
+            /// Clear local variable cache for \a script.
+            ///
+            /// \return Were there any locals that needed clearing?
+            bool clearLocals (const std::string& script);
+
         private slots:
+
+            void settingChanged (const CSMPrefs::Setting *setting);
 
             void cellClicked (int row, int column);
 

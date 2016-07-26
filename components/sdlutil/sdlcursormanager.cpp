@@ -2,6 +2,7 @@
 
 #include <cassert>
 #include <stdexcept>
+#include <iostream>
 
 #include <SDL_mouse.h>
 #include <SDL_endian.h>
@@ -52,7 +53,7 @@ namespace
 
                 if (!_gc)
                 {
-                    osg::notify(osg::NOTICE)<<"Failed to create pbuffer, failing back to normal graphics window."<<std::endl;
+                    std::cerr << "Failed to create pbuffer, failing back to normal graphics window." << std::endl;
 
                     traits->pbuffer = false;
                     _gc = osg::GraphicsContext::createGraphicsContext(traits.get());
@@ -126,7 +127,17 @@ namespace
 
         glViewport(0, 0, width, height);
 
-        osg::ref_ptr<osg::Geometry> geom = osg::createTexturedQuadGeometry(osg::Vec3(-1,-1,0), osg::Vec3(2,0,0), osg::Vec3(0,2,0));
+        osg::ref_ptr<osg::Geometry> geom;
+
+#if defined(__APPLE__)
+        // Extra flip needed on Intel graphics OS X systems due to a driver bug
+        std::string vendorString = (const char*)glGetString(GL_VENDOR);
+        if (vendorString.find("Intel") != std::string::npos)
+            geom = osg::createTexturedQuadGeometry(osg::Vec3(-1,1,0), osg::Vec3(2,0,0), osg::Vec3(0,-2,0));
+        else
+#endif
+        geom = osg::createTexturedQuadGeometry(osg::Vec3(-1,-1,0), osg::Vec3(2,0,0), osg::Vec3(0,2,0));
+
         geom->drawImplementation(renderInfo);
 
         glReadPixels(0, 0, width, height, GL_RGBA, GL_UNSIGNED_BYTE, resultImage->data());
@@ -200,19 +211,27 @@ namespace SDLUtil
         SDL_SetCursor(mCursorMap.find(name)->second);
     }
 
-    void SDLCursorManager::createCursor(const std::string& name, int rotDegrees, osg::Image* image, Uint8 size_x, Uint8 size_y, Uint8 hotspot_x, Uint8 hotspot_y)
+    void SDLCursorManager::createCursor(const std::string& name, int rotDegrees, osg::Image* image, Uint8 hotspot_x, Uint8 hotspot_y)
     {
-        _createCursorFromResource(name, rotDegrees, image, size_x, size_y, hotspot_x, hotspot_y);
+        _createCursorFromResource(name, rotDegrees, image, hotspot_x, hotspot_y);
     }
 
-    void SDLCursorManager::_createCursorFromResource(const std::string& name, int rotDegrees, osg::Image* image, Uint8 size_x, Uint8 size_y, Uint8 hotspot_x, Uint8 hotspot_y)
+    void SDLCursorManager::_createCursorFromResource(const std::string& name, int rotDegrees, osg::Image* image, Uint8 hotspot_x, Uint8 hotspot_y)
     {
+        osg::ref_ptr<osg::Image> decompressed;
+
         if (mCursorMap.find(name) != mCursorMap.end())
             return;
 
-        osg::ref_ptr<osg::Image> decompressed = decompress(image, static_cast<float>(rotDegrees));
+        try {
+            decompressed = decompress(image, static_cast<float>(rotDegrees));
+        } catch (std::exception& e) {
+            std::cerr << e.what() << std::endl;
+            std::cerr <<"Using default cursor."<<std::endl;
+            return;
+        }
 
-        SDL_Surface* surf = SDLUtil::imageToSurface(decompressed, false);
+        SDL_Surface* surf = SDLUtil::imageToSurface(decompressed, true);
 
         //set the cursor and store it for later
         SDL_Cursor* curs = SDL_CreateColorCursor(surf, hotspot_x, hotspot_y);
@@ -220,8 +239,6 @@ namespace SDLUtil
 
         //clean up
         SDL_FreeSurface(surf);
-
-        _setGUICursor(name);
     }
 
 }

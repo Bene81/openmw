@@ -17,12 +17,12 @@ namespace MWMechanics
     int CreatureStats::sActorId = 0;
 
     CreatureStats::CreatureStats()
-        : mDrawState (DrawState_Nothing), mDead (false), mDied (false), mMurdered(false), mFriendlyHits (0),
+        : mDrawState (DrawState_Nothing), mDead (false), mDeathAnimationFinished(false), mDied (false), mMurdered(false), mFriendlyHits (0),
           mTalkedTo (false), mAlarmed (false), mAttacked (false),
           mKnockdown(false), mKnockdownOneFrame(false), mKnockdownOverOneFrame(false),
           mHitRecovery(false), mBlock(false), mMovementFlags(0),
           mFallHeight(0), mRecalcMagicka(false), mLastRestock(0,0), mGoldPool(0), mActorId(-1),
-          mDeathAnimation(0), mLevel (0)
+          mDeathAnimation(-1), mTimeOfDeath(), mLevel (0)
     {
         for (int i=0; i<4; ++i)
             mAiSettings[i] = 0;
@@ -48,8 +48,10 @@ namespace MWMechanics
         const MWWorld::Store<ESM::GameSetting> &gmst =
             MWBase::Environment::get().getWorld()->getStore().get<ESM::GameSetting>();
 
-        return gmst.find ("fFatigueBase")->getFloat()
-            - gmst.find ("fFatigueMult")->getFloat() * (1-normalised);
+        static const float fFatigueBase = gmst.find("fFatigueBase")->getFloat();
+        static const float fFatigueMult = gmst.find("fFatigueMult")->getFloat();
+
+        return fFatigueBase - fFatigueMult * (1-normalised);
     }
 
     const AttributeValue &CreatureStats::getAttribute(int index) const
@@ -155,7 +157,9 @@ namespace MWMechanics
                 int endurance    = getAttribute(ESM::Attribute::Endurance).getModified();
                 DynamicStat<float> fatigue = getFatigue();
                 float diff = (strength+willpower+agility+endurance) - fatigue.getBase();
-                fatigue.modify(diff);
+                float currentToBaseRatio = (fatigue.getCurrent() / fatigue.getBase());
+                fatigue.setModified(fatigue.getModified() + diff, 0);
+                fatigue.setCurrent(fatigue.getBase() * currentToBaseRatio);
                 setFatigue(fatigue);
             }
         }
@@ -185,6 +189,9 @@ namespace MWMechanics
 
         if (index==0 && mDynamic[index].getCurrent()<1)
         {
+            if (!mDead)
+                mTimeOfDeath = MWBase::Environment::get().getWorld()->getTimeStamp();
+
             mDead = true;
 
             mDynamic[index].setModifier(0);
@@ -221,9 +228,24 @@ namespace MWMechanics
         setAiSetting(index, stat);
     }
 
+    bool CreatureStats::isParalyzed() const
+    {
+        return mMagicEffects.get(ESM::MagicEffect::Paralyze).getMagnitude() > 0;
+    }
+
     bool CreatureStats::isDead() const
     {
         return mDead;
+    }
+
+    bool CreatureStats::isDeathAnimationFinished() const
+    {
+        return mDeathAnimationFinished;
+    }
+
+    void CreatureStats::setDeathAnimationFinished(bool finished)
+    {
+        mDeathAnimationFinished = finished;
     }
 
     void CreatureStats::notifyDied()
@@ -260,9 +282,12 @@ namespace MWMechanics
     {
         if (mDead)
         {
+            if (mDynamic[0].getModified() < 1)
+                mDynamic[0].setModified(1, 0);
+
             mDynamic[0].setCurrent(mDynamic[0].getModified());
-            if (mDynamic[0].getCurrent()>=1)
-                mDead = false;
+            mDead = false;
+            mDeathAnimationFinished = false;
         }
     }
 
@@ -470,6 +495,7 @@ namespace MWMechanics
         state.mGoldPool = mGoldPool;
 
         state.mDead = mDead;
+        state.mDeathAnimationFinished = mDeathAnimationFinished;
         state.mDied = mDied;
         state.mMurdered = mMurdered;
         // The vanilla engine does not store friendly hits in the save file. Since there's no other mechanism
@@ -494,6 +520,7 @@ namespace MWMechanics
         state.mLevel = mLevel;
         state.mActorId = mActorId;
         state.mDeathAnimation = mDeathAnimation;
+        state.mTimeOfDeath = mTimeOfDeath.toEsm();
 
         mSpells.writeState(state.mSpells);
         mActiveSpells.writeState(state.mActiveSpells);
@@ -520,6 +547,7 @@ namespace MWMechanics
         mGoldPool = state.mGoldPool;
 
         mDead = state.mDead;
+        mDeathAnimationFinished = state.mDeathAnimationFinished;
         mDied = state.mDied;
         mMurdered = state.mMurdered;
         mTalkedTo = state.mTalkedTo;
@@ -540,6 +568,7 @@ namespace MWMechanics
         mLevel = state.mLevel;
         mActorId = state.mActorId;
         mDeathAnimation = state.mDeathAnimation;
+        mTimeOfDeath = MWWorld::TimeStamp(state.mTimeOfDeath);
 
         mSpells.readState(state.mSpells);
         mActiveSpells.readState(state.mActiveSpells);
@@ -603,14 +632,19 @@ namespace MWMechanics
         esm.getHNT(sActorId, "COUN");
     }
 
-    unsigned char CreatureStats::getDeathAnimation() const
+    signed char CreatureStats::getDeathAnimation() const
     {
         return mDeathAnimation;
     }
 
-    void CreatureStats::setDeathAnimation(unsigned char index)
+    void CreatureStats::setDeathAnimation(signed char index)
     {
         mDeathAnimation = index;
+    }
+
+    MWWorld::TimeStamp CreatureStats::getTimeOfDeath() const
+    {
+        return mTimeOfDeath;
     }
 
     std::map<CreatureStats::SummonKey, int>& CreatureStats::getSummonedCreatureMap()

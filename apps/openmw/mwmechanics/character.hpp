@@ -29,6 +29,7 @@ class CreatureStats;
 enum Priority {
     Priority_Default,
     Priority_WeaponLowerBody,
+    Priority_SneakIdleLowerBody,
     Priority_SwimIdle,
     Priority_Jump,
     Priority_Movement,
@@ -139,6 +140,8 @@ enum JumpingState {
     JumpState_Landing
 };
 
+struct WeaponInfo;
+
 class CharacterController : public MWRender::Animation::TextKeyListener
 {
     MWWorld::Ptr mPtr;
@@ -159,6 +162,7 @@ class CharacterController : public MWRender::Animation::TextKeyListener
 
     CharacterState mDeathState;
     std::string mCurrentDeath;
+    bool mFloatToSurface;
 
     CharacterState mHitState;
     std::string mCurrentHit;
@@ -179,7 +183,7 @@ class CharacterController : public MWRender::Animation::TextKeyListener
     float mSecondsOfSwimming;
     float mSecondsOfRunning;
 
-    MWWorld::Ptr mHeadTrackTarget;
+    MWWorld::ConstPtr mHeadTrackTarget;
 
     float mTurnAnimationThreshold; // how long to continue playing turning animation after actor stopped turning
 
@@ -187,15 +191,20 @@ class CharacterController : public MWRender::Animation::TextKeyListener
 
     bool mAttackingOrSpell;
 
-    void determineAttackType();
+    void setAttackTypeBasedOnMovement();
+    void setAttackTypeRandomly();
 
     void refreshCurrentAnims(CharacterState idle, CharacterState movement, JumpingState jump, bool force=false);
+    void refreshHitRecoilAnims();
+    void refreshJumpAnims(const WeaponInfo* weap, JumpingState jump, bool force=false);
+    void refreshMovementAnims(const WeaponInfo* weap, CharacterState movement, bool force=false);
+    void refreshIdleAnims(const WeaponInfo* weap, CharacterState idle, bool force=false);
 
     void clearAnimQueue();
 
     bool updateWeaponState();
     bool updateCreatureState();
-    void updateIdleStormState();
+    void updateIdleStormState(bool inwater);
 
     void updateHeadTracking(float duration);
 
@@ -204,11 +213,12 @@ class CharacterController : public MWRender::Animation::TextKeyListener
     void updateMagicEffects();
 
     void playDeath(float startpoint, CharacterState death);
+    CharacterState chooseRandomDeathState() const;
     void playRandomDeath(float startpoint = 0.0f);
 
     /// choose a random animation group with \a prefix and numeric suffix
     /// @param num if non-NULL, the chosen animation number will be written here
-    std::string chooseRandomGroup (const std::string& prefix, int* num = NULL);
+    std::string chooseRandomGroup (const std::string& prefix, int* num = NULL) const;
 
     bool updateCarriedLeftVisible(WeaponType weaptype) const;
 
@@ -226,12 +236,18 @@ public:
 
     void update(float duration);
 
-    void playGroup(const std::string &groupname, int mode, int count);
+    bool playGroup(const std::string &groupname, int mode, int count);
     void skipAnim();
     bool isAnimPlaying(const std::string &groupName);
 
-    /// @return false if the character has already been killed before
-    bool kill();
+    enum KillResult
+    {
+        Result_DeathAnimStarted,
+        Result_DeathAnimPlaying,
+        Result_DeathAnimJustFinished,
+        Result_DeathAnimFinished
+    };
+    KillResult kill();
 
     void resurrect();
     bool isDead() const
@@ -241,6 +257,7 @@ public:
     
     bool isReadyToBlock() const;
     bool isKnockedOut() const;
+    bool isSneaking() const;
 
     void setAttackingOrSpell(bool attackingOrSpell);
 
@@ -253,7 +270,7 @@ public:
     void setActive(bool active);
 
     /// Make this character turn its head towards \a target. To turn off head tracking, pass an empty Ptr.
-    void setHeadTrackTarget(const MWWorld::Ptr& target);
+    void setHeadTrackTarget(const MWWorld::ConstPtr& target);
 };
 
     MWWorld::ContainerStoreIterator getActiveWeapon(CreatureStats &stats, MWWorld::InventoryStore &inv, WeaponType *weaptype);
