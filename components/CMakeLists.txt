@@ -50,7 +50,7 @@ add_component_dir (shader
 
 add_component_dir (sceneutil
     clone attach visitor util statesetupdater controller skeleton riggeometry lightcontroller
-    lightmanager lightutil positionattitudetransform workqueue unrefqueue pathgridutil
+    lightmanager lightutil positionattitudetransform workqueue unrefqueue pathgridutil waterutil
     )
 
 add_component_dir (nif
@@ -77,7 +77,7 @@ add_component_dir (esm
     loadweap records aipackage effectlist spelllist variant variantimp loadtes3 cellref filter
     savedgame journalentry queststate locals globalscript player objectstate cellid cellstate globalmap inventorystate containerstate npcstate creaturestate dialoguestate statstate
     npcstats creaturestats weatherstate quickkeys fogstate spellstate activespells creaturelevliststate doorstate projectilestate debugprofile
-    aisequence magiceffects util custommarkerstate stolenitems transport
+    aisequence magiceffects util custommarkerstate stolenitems transport animationstate
     )
 
 add_component_dir (esmterrain
@@ -93,7 +93,7 @@ IF(NOT WIN32 AND NOT APPLE)
     add_definitions(-DGLOBAL_CONFIG_PATH="${GLOBAL_CONFIG_PATH}")
 ENDIF()
 add_component_dir (files
-    linuxpath androidpath windowspath macospath fixedpath multidircollection collections configurationmanager
+    linuxpath androidpath windowspath macospath fixedpath multidircollection collections configurationmanager escape
     lowlevelfile constrainedfilestream memorystream
     )
 

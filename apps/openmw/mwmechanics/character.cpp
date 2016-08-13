@@ -44,6 +44,7 @@
 #include "creaturestats.hpp"
 #include "security.hpp"
 #include "actorutil.hpp"
+#include "spellcasting.hpp"
 
 namespace
 {
@@ -762,12 +763,17 @@ CharacterController::CharacterController(const MWWorld::Ptr &ptr, MWRender::Anim
         refreshCurrentAnims(mIdleState, mMovementState, mJumpState, true);
 
     mAnimation->runAnimation(0.f);
+
+    unpersistAnimationState();
 }
 
 CharacterController::~CharacterController()
 {
     if (mAnimation)
+    {
+        persistAnimationState();
         mAnimation->setTextKeyListener(NULL);
+    }
 }
 
 void split(const std::string &s, char delim, std::vector<std::string> &elems) {
@@ -956,34 +962,6 @@ void CharacterController::updateIdleStormState(bool inwater)
     }
 }
 
-void CharacterController::castSpell(const std::string &spellid)
-{
-    static const std::string schools[] = {
-        "alteration", "conjuration", "destruction", "illusion", "mysticism", "restoration"
-    };
-
-    const MWWorld::ESMStore& store = MWBase::Environment::get().getWorld()->getStore();
-    const ESM::Spell *spell = store.get<ESM::Spell>().find(spellid);
-    const ESM::ENAMstruct &effectentry = spell->mEffects.mList.at(0);
-
-    const ESM::MagicEffect *effect;
-    effect = store.get<ESM::MagicEffect>().find(effectentry.mEffectID);
-
-    const ESM::Static* castStatic;
-    if (!effect->mCasting.empty())
-        castStatic = store.get<ESM::Static>().find (effect->mCasting);
-    else
-        castStatic = store.get<ESM::Static>().find ("VFX_DefaultCast");
-
-    mAnimation->addEffect("meshes\\" + castStatic->mModel, effect->mIndex);
-
-    MWBase::SoundManager *sndMgr = MWBase::Environment::get().getSoundManager();
-    if(!effect->mCastSound.empty())
-        sndMgr->playSound3D(mPtr, effect->mCastSound, 1.0f, 1.0f);
-    else
-        sndMgr->playSound3D(mPtr, schools[effect->mData.mSchool]+" cast", 1.0f, 1.0f);
-}
-
 bool CharacterController::updateCreatureState()
 {
     const MWWorld::Class &cls = mPtr.getClass();
@@ -1015,7 +993,8 @@ bool CharacterController::updateCreatureState()
                 const std::string spellid = stats.getSpells().getSelectedSpell();
                 if (!spellid.empty() && MWBase::Environment::get().getWorld()->startSpellCast(mPtr))
                 {
-                    castSpell(spellid);
+                    MWMechanics::CastSpell cast(mPtr, NULL);
+                    cast.playSpellCastingEffects(spellid);
 
                     if (!mAnimation->hasAnimation("spellcast"))
                         MWBase::Environment::get().getWorld()->castSpell(mPtr); // No "release" text key to use, so cast immediately
@@ -1243,7 +1222,8 @@ bool CharacterController::updateWeaponState()
 
                 if(!spellid.empty() && MWBase::Environment::get().getWorld()->startSpellCast(mPtr))
                 {
-                    castSpell(spellid);
+                    MWMechanics::CastSpell cast(mPtr, NULL);
+                    cast.playSpellCastingEffects(spellid);
 
                     const ESM::Spell *spell = store.get<ESM::Spell>().find(spellid);
                     const ESM::ENAMstruct &effectentry = spell->mEffects.mList.at(0);
@@ -1557,14 +1537,14 @@ void CharacterController::update(float duration)
     {
         if(mAnimQueue.size() > 1)
         {
-            if(mAnimation->isPlaying(mAnimQueue.front().first) == false)
+            if(mAnimation->isPlaying(mAnimQueue.front().mGroup) == false)
             {
-                mAnimation->disable(mAnimQueue.front().first);
+                mAnimation->disable(mAnimQueue.front().mGroup);
                 mAnimQueue.pop_front();
 
-                mAnimation->play(mAnimQueue.front().first, Priority_Default,
+                mAnimation->play(mAnimQueue.front().mGroup, Priority_Default,
                                  MWRender::Animation::BlendMask_All, false,
-                                 1.0f, "start", "stop", 0.0f, mAnimQueue.front().second);
+                                 1.0f, "start", "stop", 0.0f, mAnimQueue.front().mLoopCount);
             }
         }
     }
@@ -1837,14 +1817,14 @@ void CharacterController::update(float duration)
         }
         else if(mAnimQueue.size() > 1)
         {
-            if(mAnimation->isPlaying(mAnimQueue.front().first) == false)
+            if(mAnimation->isPlaying(mAnimQueue.front().mGroup) == false)
             {
-                mAnimation->disable(mAnimQueue.front().first);
+                mAnimation->disable(mAnimQueue.front().mGroup);
                 mAnimQueue.pop_front();
 
-                mAnimation->play(mAnimQueue.front().first, Priority_Default,
+                mAnimation->play(mAnimQueue.front().mGroup, Priority_Default,
                                  MWRender::Animation::BlendMask_All, false,
-                                 1.0f, "start", "stop", 0.0f, mAnimQueue.front().second);
+                                 1.0f, "start", "stop", 0.0f, mAnimQueue.front().mLoopCount);
             }
         }
 
@@ -1951,8 +1931,74 @@ void CharacterController::update(float duration)
     mAnimation->enableHeadAnimation(cls.isActor() && !cls.getCreatureStats(mPtr).isDead());
 }
 
+void CharacterController::persistAnimationState()
+{
+    ESM::AnimationState& state = mPtr.getRefData().getAnimationState();
 
-bool CharacterController::playGroup(const std::string &groupname, int mode, int count)
+    state.mScriptedAnims.clear();
+    for (AnimationQueue::const_iterator iter = mAnimQueue.begin(); iter != mAnimQueue.end(); ++iter)
+    {
+        if (!iter->mPersist)
+            continue;
+
+        ESM::AnimationState::ScriptedAnimation anim;
+        anim.mGroup = iter->mGroup;
+
+        if (iter == mAnimQueue.begin())
+        {
+            anim.mLoopCount = mAnimation->getCurrentLoopCount(anim.mGroup);
+            float complete;
+            mAnimation->getInfo(anim.mGroup, &complete, NULL);
+            anim.mTime = complete;
+        }
+        else
+        {
+            anim.mLoopCount = iter->mLoopCount;
+            anim.mTime = 0.f;
+        }
+
+        state.mScriptedAnims.push_back(anim);
+    }
+}
+
+void CharacterController::unpersistAnimationState()
+{
+    const ESM::AnimationState& state = mPtr.getRefData().getAnimationState();
+
+    if (!state.mScriptedAnims.empty())
+    {
+        clearAnimQueue();
+        for (ESM::AnimationState::ScriptedAnimations::const_iterator iter = state.mScriptedAnims.begin(); iter != state.mScriptedAnims.end(); ++iter)
+        {
+            AnimationQueueEntry entry;
+            entry.mGroup = iter->mGroup;
+            entry.mLoopCount = iter->mLoopCount;
+            entry.mPersist = true;
+
+            mAnimQueue.push_back(entry);
+        }
+
+        const ESM::AnimationState::ScriptedAnimation& anim = state.mScriptedAnims.front();
+        float complete = anim.mTime;
+        if (anim.mAbsolute)
+        {
+            float start = mAnimation->getTextKeyTime(anim.mGroup+": start");
+            float stop = mAnimation->getTextKeyTime(anim.mGroup+": stop");
+            float time = std::max(start, std::min(stop, anim.mTime));
+            complete = (time - start) / (stop - start);
+        }
+
+        mAnimation->disable(mCurrentIdle);
+        mCurrentIdle.clear();
+        mIdleState = CharState_SpecialIdle;
+
+        mAnimation->play(anim.mGroup,
+                         Priority_Default, MWRender::Animation::BlendMask_All, false, 1.0f,
+                         "start", "stop", complete, anim.mLoopCount);
+    }
+}
+
+bool CharacterController::playGroup(const std::string &groupname, int mode, int count, bool persist)
 {
     if(!mAnimation || !mAnimation->hasAnimation(groupname))
     {
@@ -1962,10 +2008,16 @@ bool CharacterController::playGroup(const std::string &groupname, int mode, int 
     else
     {
         count = std::max(count, 1);
-        if(mode != 0 || mAnimQueue.empty() || !isAnimPlaying(mAnimQueue.front().first))
+
+        AnimationQueueEntry entry;
+        entry.mGroup = groupname;
+        entry.mLoopCount = count-1;
+        entry.mPersist = persist;
+
+        if(mode != 0 || mAnimQueue.empty() || !isAnimPlaying(mAnimQueue.front().mGroup))
         {
             clearAnimQueue();
-            mAnimQueue.push_back(std::make_pair(groupname, count-1));
+            mAnimQueue.push_back(entry);
 
             mAnimation->disable(mCurrentIdle);
             mCurrentIdle.clear();
@@ -1978,9 +2030,9 @@ bool CharacterController::playGroup(const std::string &groupname, int mode, int 
         else if(mode == 0)
         {
             if (!mAnimQueue.empty())
-                mAnimation->stopLooping(mAnimQueue.front().first);
+                mAnimation->stopLooping(mAnimQueue.front().mGroup);
             mAnimQueue.resize(1);
-            mAnimQueue.push_back(std::make_pair(groupname, count-1));
+            mAnimQueue.push_back(entry);
         }
     }
     return true;
@@ -2002,7 +2054,7 @@ bool CharacterController::isAnimPlaying(const std::string &groupName)
 void CharacterController::clearAnimQueue()
 {
     if(!mAnimQueue.empty())
-        mAnimation->disable(mAnimQueue.front().first);
+        mAnimation->disable(mAnimQueue.front().mGroup);
     mAnimQueue.clear();
 }
 
